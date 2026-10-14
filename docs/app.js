@@ -116,7 +116,7 @@ function chips() {
 }
 function card(a) {
   const c = cli(a.clienteId), st = ST[a.status] || ST.agendado;
-  return `<article class="apt" style="--c:var(--${st[1]})" data-a="apt" data-v="${a.id}"><div class="t"><b>${a.hora}</b><span>${m2h(h2m(a.hora) + (a.dur || 60))}</span></div><i class="bar"></i><div class="i"><h4>${esc(c.nome)}</h4><p>${esc(a.servicoNome)}${a.profissionalNome && !V.prof ? ' · ' + esc(prim(a.profissionalNome)) : ''}${a.remarcacoes ? ' · remarcado' : ''}</p></div><span class="chip">${st[0]}</span></article>`;
+  return `<article class="apt" style="--c:var(--${st[1]})" data-a="apt" data-v="${a.id}"><div class="t"><b>${a.hora}</b><span>${m2h(h2m(a.hora) + (a.dur || 60))}</span></div><i class="bar"></i><div class="i"><h4>${esc(c.nome)}</h4><p>${esc(a.servicoNome)}${a.profissionalNome && !V.prof ? ' · ' + esc(prim(a.profissionalNome)) : ''}${a.remarcacoes ? ' · remarcado' : ''}</p></div><span class="chip">${st[0]}</span>${!a.tcle && ['agendado', 'confirmado'].includes(a.status) ? '<i class="tcd" title="TCLE pendente"></i>' : ''}</article>`;
 }
 const empty = () => `<div class="empty">${IC.lotus}<h3>Dia livre</h3><p>Nenhum horário marcado.</p><button class="btn pr" data-a="fab">Agendar agora</button></div>`;
 const lista = d => { const l = apts(d); return l.length ? l.map(card).join('') : empty(); };
@@ -158,26 +158,45 @@ function aptSheet(id) {
   const a = S.agendamentos.find(x => x.id === id); if (!a) return; const c = cli(a.clienteId), st = ST[a.status] || ST.agendado;
   sheet(`<h3>${esc(c.nome)}</h3><div class="det"><span class="chip" style="--c:var(--${st[1]});align-self:flex-start">${st[0]}</span><p class="mu" style="margin:6px 0 0">${esc(a.servicoNome)}${a.profissionalNome ? ' · ' + esc(a.profissionalNome) : ''}</p><p class="mu" style="margin:0">${fd(a.data)} · ${a.hora} – ${m2h(h2m(a.hora) + (a.dur || 60))} · ${brl(a.valor)}</p>${a.msgEnviada && a.status === 'agendado' ? '<p class="mu" style="margin:0">Pedido de confirmação enviado — aguardando resposta</p>' : ''}${a.obs ? `<p style="margin:8px 0 0">${esc(a.obs)}</p>` : ''}</div>
   <a class="btn wa" href="${wa(c.tel, msgC(a, c))}" target="_blank" rel="noopener" data-a="sent" data-v="${id}">Pedir confirmação no WhatsApp</a>
-  <div class="acts" style="margin-top:10px"><button class="btn" data-a="st" data-v="${id}" data-s="confirmado">✓ Confirmou</button>${canAct(a) ? `<button class="btn" data-a="atend" data-v="${id}">✔ Atendido</button>` : ''}<button class="btn" data-a="editApt" data-v="${id}">Remarcar / editar</button><button class="btn" data-a="st" data-v="${id}" data-s="faltou">Faltou</button><button class="btn" data-a="st" data-v="${id}" data-s="cancelado">Cancelar</button><button class="btn dg" data-a="delApt" data-v="${id}">Excluir</button></div>`);
+  <button class="btn" data-a="tcle" data-v="${id}" style="margin-top:10px">${a.tcle ? '✓ TCLE assinado' : '📝 TCLE do procedimento · pendente'}</button><div class="acts" style="margin-top:10px"><button class="btn" data-a="st" data-v="${id}" data-s="confirmado">✓ Confirmou</button>${canAct(a) ? `<button class="btn" data-a="atend" data-v="${id}">✔ Atendido</button>` : ''}<button class="btn" data-a="editApt" data-v="${id}">Remarcar / editar</button><button class="btn" data-a="st" data-v="${id}" data-s="faltou">Faltou</button><button class="btn" data-a="st" data-v="${id}" data-s="cancelado">Cancelar</button><button class="btn dg" data-a="delApt" data-v="${id}">Excluir</button></div>`);
 }
+
+/* ---------- regra: nada de horário no passado ---------- */
+const agoraHM = () => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const proxSlot = () => { const d = new Date(), m = Math.ceil((d.getHours() * 60 + d.getMinutes() + 1) / 15) * 15; return m; };
+function slotsHora(data, atual) {
+  const min = data === hoje() ? proxSlot() : 0, out = [];
+  for (let m = 7 * 60; m <= 21 * 60 + 45; m += 15) if (m >= min) out.push(m2h(m));
+  if (atual && !out.includes(atual)) out.push(atual); out.sort();
+  return out;
+}
+function horaOpts(data, sel, atual) {
+  const l = slotsHora(data, atual);
+  if (!l.length) return '<option value="" disabled selected>Sem horários hoje — escolha outra data</option>';
+  return l.map(h => `<option ${h === sel ? 'selected' : ''}>${h}</option>`).join('');
+}
+const noPassado = (data, hora) => data < hoje() || (data === hoje() && hora < agoraHM());
+
 function aptForm(id, pre) {
   const sv = S.servicos;
   if (!sv.length) { sheet('<h3>Cadastre os procedimentos</h3><p class="mu">Antes de agendar, adicione os procedimentos em Ajustes.</p><button class="btn pr" data-a="tab" data-v="ajustes">Ir para Ajustes</button>'); return; }
   const o = id ? S.agendamentos.find(x => x.id === id) : null, f = sv.find(x => x.id === (o && o.servicoId)) || sv[0];
-  const a = o || Object.assign({ data: V.date, hora: '09:00', dur: f.dur, valor: f.valor, clienteId: '' }, pre || {});
+  const a = o || Object.assign({ data: V.date < hoje() ? hoje() : V.date, hora: '09:00', dur: f.dur, valor: f.valor, clienteId: '' }, pre || {});
+  if (!o) { const ls = slotsHora(a.data); if (!ls.includes(a.hora)) a.hora = ls[0] || ''; }
   V.edit = id || null;
   const pf = a.profissionalId || V.prof || myProf() || '';
   const profField = S.profissionais.length ? `<label>Profissional</label><select id="fpr">${S.profissionais.slice().sort(byNome).map(p => `<option value="${p.id}" ${p.id === pf ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>` : '';
   sheet(`<h3>${id ? 'Remarcar / editar' : 'Novo agendamento'}</h3><label>Cliente</label><select id="fc"><option value="">Selecione…</option><option value="__n">＋ Novo cliente</option>${S.clientes.slice().sort(byNome).map(c => `<option value="${c.id}" ${c.id === a.clienteId ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select>
   <div id="nc" hidden><input id="nn" placeholder="Nome completo"><input id="ncpf" inputmode="numeric" placeholder="CPF (000.000.000-00)"><input id="nt" type="tel" placeholder="WhatsApp com DDD"><label>Aniversário</label><input id="nb" type="date"></div>
   <label>Procedimento</label><select id="fs">${sv.map(s => `<option value="${s.id}" data-d="${s.dur}" data-v="${s.valor}" ${s.id === f.id ? 'selected' : ''}>${esc(s.nome)}</option>`).join('')}</select>
-  ${profField}<div class="rw"><div><label>Data</label><input id="fdt" type="date" value="${a.data}"></div><div><label>Hora</label><input id="fh" type="time" value="${a.hora}"></div></div>
+  ${profField}<div class="rw"><div><label>Data</label><input id="fdt" type="date" value="${a.data}" ${o && o.data < hoje() ? '' : `min="${hoje()}"`}></div><div><label>Hora</label><select id="fh">${horaOpts(a.data, a.hora, o && o.data === a.data ? o.hora : '')}</select></div></div>
   <div class="rw"><div><label>Duração (min)</label><input id="fu" type="number" inputmode="numeric" value="${a.dur}"></div><div><label>Valor (R$)</label><input id="fv" type="number" inputmode="decimal" step="0.01" value="${a.valor}"></div></div>
   <label>Observações</label><input id="fo" value="${esc(a.obs || '')}"><p id="wn" class="er"></p><button class="btn pr" id="svb" data-a="saveApt">Salvar</button>`);
 }
 async function saveApt() {
   let cid = $('#fc').value; const sid = $('#fs').value, data = $('#fdt').value, hora = $('#fh').value;
   if (!cid || !sid || !data || !hora) { toast('Preencha cliente, procedimento, data e hora.'); return; }
+  { const o0 = V.edit ? S.agendamentos.find(x => x.id === V.edit) : null; if ((!o0 || o0.data !== data || o0.hora !== hora) && noPassado(data, hora)) { toast('Esse horário já passou. ' + (data === hoje() ? 'Escolha a partir de ' + (slotsHora(data)[0] || 'amanhã') + '.' : 'Escolha uma data a partir de hoje.')); return; } }
   const pid = ($('#fpr') || {}).value || '', dur = +$('#fu').value || 60, btn = $('#svb'), nn = ($('#nn') || { value: '' }).value.trim();
   if (cid === '__n' && !nn) { toast('Informe o nome do novo cliente.'); return; }
   const ncpf = ($('#ncpf') || { value: '' }).value.trim(); if (cid === '__n' && !ncpf) { toast('Informe o CPF do novo cliente.'); return; } if (cid === '__n' && !cpfOk(ncpf)) { toast('CPF inválido. Confira os números.'); return; }
@@ -349,6 +368,42 @@ function printTermo(id) {
   w.document.close();
 }
 
+
+/* ---------- TCLE: um termo para cada procedimento agendado ---------- */
+const TCLE_GERAL = 'Riscos e efeitos possíveis (gerais): dor ou desconforto local, vermelhidão, inchaço, hematomas, sensibilidade, infecção, reações alérgicas, assimetrias e resultados que variam de pessoa para pessoa, não havendo garantia de resultado específico.';
+const TCLE_DECL = 'Declaro que informei corretamente meu histórico de saúde, alergias e medicamentos em uso; que tive a oportunidade de esclarecer minhas dúvidas; que compreendo e seguirei as orientações de cuidados antes e depois do procedimento; e que posso revogar este consentimento antes da realização do procedimento. Autorizo a realização do procedimento descrito.';
+function tcleTexto(ap) {
+  const c = cli(ap.clienteId), sv = S.servicos.find(x => x.id === ap.servicoId) || {};
+  return { abre: `Eu, ${c.nome}${c.cpf ? ', CPF ' + maskCpf(c.cpf) : ''}, declaro que fui informada(o)${ap.profissionalNome ? ' por ' + ap.profissionalNome : ' pelo(a) profissional responsável'} sobre o procedimento “${ap.servicoNome}”, agendado para ${new Date(prs(ap.data)).toLocaleDateString('pt-BR')} às ${ap.hora}, incluindo sua finalidade, técnica, cuidados pré e pós-procedimento e alternativas.`, riscos: TCLE_GERAL, esp: (sv.tcle || '').trim(), decl: TCLE_DECL };
+}
+function tcleForm(id) {
+  const ap = S.agendamentos.find(x => x.id === id); if (!ap) return; V.edit = id; const t = ap.tcle, c = cli(ap.clienteId);
+  if (t && !V.refazT) {
+    sheet(`<h3>TCLE assinado</h3><p class="mu" style="margin:2px 0 10px">${esc(c.nome)} · ${esc(ap.servicoNome)} · ${fd(ap.data)}</p><p class="lgpd"><b>✓ Assinado em ${new Date(t.em).toLocaleDateString('pt-BR')}</b>${t.por ? ' · registrado por ' + esc(t.por) : ''}</p>${t.ass ? `<img class="sigimg" src="${t.ass}" alt="Assinatura">` : ''}
+    <button class="btn pr" data-a="printTcle" data-v="${id}">Imprimir / salvar em PDF</button><button class="btn" data-a="refazTcle" data-v="${id}">Refazer TCLE</button><button class="btn" data-a="apt" data-v="${id}">‹ Voltar ao agendamento</button>`); return;
+  }
+  V.refazT = false; const x = tcleTexto(ap);
+  sheet(`<h3>TCLE · ${esc(ap.servicoNome)}</h3><p class="mu" style="margin:2px 0 8px">Termo de Consentimento Livre e Esclarecido · ${esc(c.nome)}</p>
+  <p class="lgpd">${esc(x.abre)}</p><p class="lgpd">${esc(x.riscos)}</p>${x.esp ? `<p class="lgpd"><b>Específico deste procedimento:</b> ${esc(x.esp)}</p>` : ''}<p class="lgpd">${esc(x.decl)}</p>
+  <label class="decl"><input type="checkbox" id="tcl"><span>Li (ou foi lido para mim) e compreendi este termo, e concordo com a realização do procedimento.</span></label>
+  <label>Assinatura da paciente (com o dedo)</label><div class="sigw"><canvas id="sig"></canvas><span id="sigh" class="sigh">Assine aqui</span></div><button class="lk" data-a="sigclr" style="margin:0">Limpar assinatura</button>
+  <p id="wn" class="er"></p><button class="btn pr" data-a="saveTcle">Salvar TCLE</button><button class="btn" data-a="apt" data-v="${id}">Cancelar</button>`);
+  setTimeout(sigInit, 60);
+}
+async function saveTcle() {
+  const ap = S.agendamentos.find(x => x.id === V.edit); if (!ap) return;
+  if (!$('#tcl').checked) { toast('Marque que a paciente leu e concorda com o termo.'); return; } if (!SIG.drawn) { toast('A paciente precisa assinar no quadro.'); return; }
+  const cv = $('#sig'), o = document.createElement('canvas'); o.width = 480; o.height = Math.round(480 * cv.height / cv.width); const g = o.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, o.width, o.height); g.drawImage(cv, 0, 0, o.width, o.height);
+  const x = tcleTexto(ap);
+  try { await upd(ap.id, { tcle: { ass: o.toDataURL('image/png'), em: Date.now(), por: ME.nome || '', txt: [x.abre, x.riscos, x.esp, x.decl].filter(Boolean).join('\n\n') } }); note('TCLE salvo.'); tcleForm(ap.id); } catch (e) { }
+}
+function printTcle(id) {
+  const ap = S.agendamentos.find(x => x.id === id); if (!ap || !ap.tcle) return; const c = cli(ap.clienteId), t = ap.tcle;
+  const w = window.open('', '_blank'); if (!w) { note('Libere pop-ups para imprimir.'); return; }
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>TCLE - ${esc(c.nome)}</title><style>body{font:14px/1.55 -apple-system,Helvetica,sans-serif;margin:40px;color:#222}h1{font:600 21px Georgia,serif}p{margin:12px 0;white-space:pre-line}.sg{margin-top:30px;width:320px}.sg img{height:90px;display:block}.sg div{border-top:1px solid #333;padding-top:4px;font-size:12px}</style><h1>Termo de Consentimento Livre e Esclarecido (TCLE)</h1><p>${esc(S.config.nome || '')}</p><p><b>Procedimento:</b> ${esc(ap.servicoNome)} · ${new Date(prs(ap.data)).toLocaleDateString('pt-BR')} ${esc(ap.hora)}${ap.profissionalNome ? ' · ' + esc(ap.profissionalNome) : ''}</p><p>${esc(t.txt || '')}</p><p>Assinado em ${new Date(t.em).toLocaleDateString('pt-BR')}</p><div class="sg"><img src="${t.ass}"><div>${esc(c.nome)}${c.cpf ? ' · CPF ' + maskCpf(c.cpf) : ''}</div></div><script>setTimeout(()=>print(),400)<\/script>`);
+  w.document.close();
+}
+
 /* ---------- ficha de anamnese (HOF) ---------- */
 const YN = ['Não', 'Sim'], SNA = ['Não', 'Sim', 'Não se aplica'];
 const AN_SEC = [
@@ -487,7 +542,7 @@ function vAjustes() {
 }
 function srvForm(id) {
   const s = id ? S.servicos.find(x => x.id === id) || {} : {}; V.edit = id || null;
-  sheet(`<h3>${id ? 'Editar' : 'Novo'} procedimento</h3><label>Nome</label><input id="sn" value="${esc(s.nome || '')}"><div class="rw"><div><label>Duração (min)</label><input id="sd" type="number" inputmode="numeric" value="${s.dur || 60}"></div><div><label>Valor (R$)</label><input id="sv" type="number" inputmode="decimal" step="0.01" value="${s.valor || 0}"></div></div><p id="wn" class="er"></p><button class="btn pr" data-a="saveSrv">Salvar</button>${id ? `<button class="btn dg" data-a="delSrv" data-v="${id}">Excluir</button>` : ''}`);
+  sheet(`<h3>${id ? 'Editar' : 'Novo'} procedimento</h3><label>Nome</label><input id="sn" value="${esc(s.nome || '')}"><div class="rw"><div><label>Duração (min)</label><input id="sd" type="number" inputmode="numeric" value="${s.dur || 60}"></div><div><label>Valor (R$)</label><input id="sv" type="number" inputmode="decimal" step="0.01" value="${s.valor || 0}"></div></div><label>Riscos e orientações deste procedimento (aparecem no TCLE)</label><textarea id="stc" rows="4" placeholder="Opcional. Ex.: riscos específicos, contraindicações, cuidados pós.">${esc(s.tcle || '')}</textarea><p id="wn" class="er"></p><button class="btn pr" data-a="saveSrv">Salvar</button>${id ? `<button class="btn dg" data-a="delSrv" data-v="${id}">Excluir</button>` : ''}`);
 }
 function profForm(id) {
   const p = id ? S.profissionais.find(x => x.id === id) || {} : {}; V.edit = id || null;
@@ -534,7 +589,7 @@ const A = {
     if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário altera um atendimento já registrado.'); return; } await delRec(a); }
     try { await upd(v, { status: b.dataset.s }); closeSheet(); } catch (e) { }
   },
-  atend: v => { const a = S.agendamentos.find(x => x.id === v); sheet(`<h3>Registrar atendimento</h3><label>Valor recebido (R$)</label><input id="vr" type="number" inputmode="decimal" step="0.01" value="${a ? a.valor : 0}"><p id="wn" class="er"></p><button class="btn pr" data-a="doAtend" data-v="${v}">Confirmar atendimento</button>`); },
+  atend: v => { const a = S.agendamentos.find(x => x.id === v); if (a && !a.tcle && V.tw !== v) { V.tw = v; note('TCLE deste procedimento ainda não foi assinado. Toque em “Atendido” de novo para registrar mesmo assim.'); return; } V.tw = null; sheet(`<h3>Registrar atendimento</h3><label>Valor recebido (R$)</label><input id="vr" type="number" inputmode="decimal" step="0.01" value="${a ? a.valor : 0}"><p id="wn" class="er"></p><button class="btn pr" data-a="doAtend" data-v="${v}">Confirmar atendimento</button>`); },
   doAtend: async v => {
     const a = S.agendamentos.find(x => x.id === v); if (!a) return; const val = +$('#vr').value || 0;
     try {
@@ -553,7 +608,7 @@ const A = {
     const a = S.agendamentos.find(x => x.id === v); if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário exclui um atendimento registrado.'); return; } await delRec(a); }
     await del('agendamentos', v); closeSheet();
   },
-  cli: cliSheet, termo: termoForm, saveTermo, printTermo, refazT: v => { V.refazT = true; termoForm(v); }, sigclr: () => sigInit(), fotos: fotosAbrir, fgrade: () => fotosGrade(), ffil: v => { V.ff = v; fotosGrade(); }, fver: fotoVer, fcmp: () => fotosComparar(), fsalvar: fotosSalvar,
+  cli: cliSheet, tcle: tcleForm, saveTcle, printTcle, refazTcle: v => { V.refazT = true; tcleForm(v); }, termo: termoForm, saveTermo, printTermo, refazT: v => { V.refazT = true; termoForm(v); }, sigclr: () => sigInit(), fotos: fotosAbrir, fgrade: () => fotosGrade(), ffil: v => { V.ff = v; fotosGrade(); }, fver: fotoVer, fcmp: () => fotosComparar(), fsalvar: fotosSalvar,
   ftipo: (v, b) => { $('#ftp').value = v; b.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); },
   fdel: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } V.del = null; try { await fotoRemove(V.fc, v); V.fl = V.fl.filter(x => x.id !== v); note('Foto excluída.'); fotosGrade(); } catch (e) { note('Não foi possível excluir.'); } }, anForm, saveAn, printAn, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
   rprev: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m - 2, 1)).slice(0, 7); render(); },
@@ -561,7 +616,7 @@ const A = {
   srv: v => srvForm(v), newSrv: () => srvForm(), prof: v => profForm(v), newProf: () => profForm(),
   saveProf: async () => { const n = $('#pnm').value.trim(); if (!n) { toast('Informe o nome.'); return; } const old = V.edit ? S.profissionais.find(x => x.id === V.edit) : {}; try { await put('profissionais', Object.assign({}, old, { nome: n })); closeSheet(); } catch (e) { } },
   delProf: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } await del('profissionais', v); if (V.prof === v) V.prof = ''; closeSheet(); },
-  saveSrv: async () => { const n = $('#sn').value.trim(); if (!n) { toast('Informe o nome.'); return; } const old = V.edit ? S.servicos.find(x => x.id === V.edit) : {}; try { await put('servicos', Object.assign({}, old, { nome: n, dur: +$('#sd').value || 60, valor: +$('#sv').value || 0 })); closeSheet(); } catch (e) { } },
+  saveSrv: async () => { const n = $('#sn').value.trim(); if (!n) { toast('Informe o nome.'); return; } const old = V.edit ? S.servicos.find(x => x.id === V.edit) : {}; try { await put('servicos', Object.assign({}, old, { nome: n, dur: +$('#sd').value || 60, valor: +$('#sv').value || 0, tcle: ($('#stc') || { value: '' }).value.trim() })); closeSheet(); } catch (e) { } },
   delSrv: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } await del('servicos', v); closeSheet(); },
   sug: async () => { try { for (const [nome, dur, valor] of SUG) await put('servicos', { nome, dur, valor }); } catch (e) { } },
   claim: v => setClaim(ME.id, v), unclaim: async v => { await setClaim(v, ''); closeSheet(); },
@@ -577,6 +632,7 @@ const A = {
 document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a; if (a !== 'sent') e.preventDefault(); if (A[a]) A[a](b.dataset.v, b); });
 document.addEventListener('change', e => { if (e.target.id === 'fcam' || e.target.id === 'fgal') { const fs = [...e.target.files]; fotosEscolhidas(fs).finally(() => { try { e.target.value = ''; } catch (x) { } }); return; } if (e.target.type === 'radio' && (e.target.name || '').startsWith('an_')) { const d = document.querySelector(`[data-d="${e.target.name.slice(3)}"]`); if (d) d.hidden = e.target.value !== 'Sim'; }
   const t = e.target;
+  if (t.id === 'fdt' && $('#fh')) { const cur = $('#fh').value; $('#fh').innerHTML = horaOpts(t.value, cur, ''); }
   if (t.id === 'sA' || t.id === 'sD') { fotosComparar($('#sA').value, $('#sD').value); return; }
   if (t.id === 'fc' && $('#nc')) $('#nc').hidden = t.value !== '__n';
   if (t.id === 'fs') { const o = t.selectedOptions[0]; $('#fu').value = o.dataset.d; $('#fv').value = o.dataset.v; }
