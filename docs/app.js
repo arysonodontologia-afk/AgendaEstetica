@@ -169,7 +169,7 @@ function aptForm(id, pre) {
   const pf = a.profissionalId || V.prof || myProf() || '';
   const profField = S.profissionais.length ? `<label>Profissional</label><select id="fpr">${S.profissionais.slice().sort(byNome).map(p => `<option value="${p.id}" ${p.id === pf ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>` : '';
   sheet(`<h3>${id ? 'Remarcar / editar' : 'Novo agendamento'}</h3><label>Cliente</label><select id="fc"><option value="">Selecione…</option><option value="__n">＋ Novo cliente</option>${S.clientes.slice().sort(byNome).map(c => `<option value="${c.id}" ${c.id === a.clienteId ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select>
-  <div id="nc" hidden><input id="nn" placeholder="Nome completo"><input id="nt" type="tel" placeholder="WhatsApp com DDD"><label>Aniversário</label><input id="nb" type="date"></div>
+  <div id="nc" hidden><input id="nn" placeholder="Nome completo"><input id="ncpf" inputmode="numeric" placeholder="CPF (000.000.000-00)"><input id="nt" type="tel" placeholder="WhatsApp com DDD"><label>Aniversário</label><input id="nb" type="date"></div>
   <label>Procedimento</label><select id="fs">${sv.map(s => `<option value="${s.id}" data-d="${s.dur}" data-v="${s.valor}" ${s.id === f.id ? 'selected' : ''}>${esc(s.nome)}</option>`).join('')}</select>
   ${profField}<div class="rw"><div><label>Data</label><input id="fdt" type="date" value="${a.data}"></div><div><label>Hora</label><input id="fh" type="time" value="${a.hora}"></div></div>
   <div class="rw"><div><label>Duração (min)</label><input id="fu" type="number" inputmode="numeric" value="${a.dur}"></div><div><label>Valor (R$)</label><input id="fv" type="number" inputmode="decimal" step="0.01" value="${a.valor}"></div></div>
@@ -180,13 +180,15 @@ async function saveApt() {
   if (!cid || !sid || !data || !hora) { toast('Preencha cliente, procedimento, data e hora.'); return; }
   const pid = ($('#fpr') || {}).value || '', dur = +$('#fu').value || 60, btn = $('#svb'), nn = ($('#nn') || { value: '' }).value.trim();
   if (cid === '__n' && !nn) { toast('Informe o nome do novo cliente.'); return; }
+  const ncpf = ($('#ncpf') || { value: '' }).value.trim(); if (cid === '__n' && !ncpf) { toast('Informe o CPF do novo cliente.'); return; } if (cid === '__n' && !cpfOk(ncpf)) { toast('CPF inválido. Confira os números.'); return; }
+  if (cid === '__n' && S.clientes.some(x => String(x.cpf || '').replace(/\D/g, '') === ncpf.replace(/\D/g, ''))) { toast('Este CPF já está cadastrado. Selecione a cliente na lista.'); return; }
   const old = V.edit ? S.agendamentos.find(x => x.id === V.edit) : null, s = S.servicos.find(x => x.id === sid) || { nome: '—' };
   if (btn) btn.disabled = true;
   const r = await withLock(data, async list => {
     const act = x => !['cancelado', 'faltou'].includes(x.status);
     const cf = list.filter(x => x.id !== V.edit && x.data === data && act(x) && h2m(x.hora) < h2m(hora) + dur && h2m(hora) < h2m(x.hora) + (x.dur || 60) && ((x.profissionalId || '') === pid || (cid !== '__n' && x.clienteId === cid)));
     if (cf.length) return { cf };
-    if (cid === '__n') cid = await put('clientes', { nome: nn, tel: ($('#nt') || { value: '' }).value.trim(), nasc: ($('#nb') || { value: '' }).value });
+    if (cid === '__n') cid = await put('clientes', { nome: nn, cpf: ncpf.replace(/\D/g, ''), tel: ($('#nt') || { value: '' }).value.trim(), nasc: ($('#nb') || { value: '' }).value });
     const base = list.find(x => x.id === V.edit) || old;
     const o = Object.assign({ status: 'agendado', remarcacoes: 0 }, base || {}, { clienteId: cid, servicoId: sid, servicoNome: s.nome, profissionalId: pid, profissionalNome: (S.profissionais.find(p => p.id === pid) || {}).nome || '', data, hora, dur, valor: +$('#fv').value || 0, obs: $('#fo').value.trim() });
     if (base && (base.data !== data || base.hora !== hora)) { o.remarcacoes = (base.remarcacoes || 0) + 1; o.status = 'agendado'; o.msgEnviada = false; o.hist = (base.hist || []).concat(base.data + ' ' + base.hora); }
@@ -201,29 +203,124 @@ async function saveApt() {
 /* clientes */
 function listaCli() {
   const q = V.q.toLowerCase();
-  return S.clientes.filter(c => !q || (c.nome || '').toLowerCase().includes(q) || (c.tel || '').includes(q)).sort(byNome).map(c => {
+  return S.clientes.filter(c => !q || (c.nome || '').toLowerCase().includes(q) || (c.tel || '').includes(q) || (c.cpf || '').includes(q.replace(/\D/g, '') || '§')).sort(byNome).map(c => {
     const n = S.agendamentos.filter(a => a.clienteId === c.id && a.status === 'atendido').length;
     return `<div class="row" data-a="cli" data-v="${c.id}"><div class="av">${esc((c.nome || '?').trim()[0].toUpperCase())}</div><div class="inf"><b>${esc(c.nome)}</b><div class="mu">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</div></div><span class="mu">${n} atend.</span></div>`;
   }).join('') || vazio('Nenhum cliente cadastrado.');
 }
 function vClientes() {
   const m = new Date().getMonth() + 1, an = S.clientes.filter(c => c.nasc && +c.nasc.slice(5, 7) === m).sort((a, b) => a.nasc.slice(8) - b.nasc.slice(8));
-  return `<header class="top"><div><p class="eyebrow">${S.clientes.length} cadastrada${S.clientes.length === 1 ? '' : 's'}</p><h1>Clientes</h1></div></header>${an.length ? `<div class="an">🎂 <b>Aniversariantes de ${MS[m - 1]}</b><br>${an.map(c => esc(prim(c.nome)) + ' (' + c.nasc.slice(8) + ')').join(' · ')}</div>` : ''}<div class="search">${IC.search}<input id="q" placeholder="Buscar nome ou telefone" value="${esc(V.q)}"></div><div id="lista">${listaCli()}</div>`;
+  return `<header class="top"><div><p class="eyebrow">${S.clientes.length} cadastrada${S.clientes.length === 1 ? '' : 's'}</p><h1>Clientes</h1></div></header>${an.length ? `<div class="an">🎂 <b>Aniversariantes de ${MS[m - 1]}</b><br>${an.map(c => esc(prim(c.nome)) + ' (' + c.nasc.slice(8) + ')').join(' · ')}</div>` : ''}<div class="search">${IC.search}<input id="q" placeholder="Buscar nome, telefone ou CPF" value="${esc(V.q)}"></div><div id="lista">${listaCli()}</div>`;
 }
+const maskCpf = v => { const d = String(v || '').replace(/\D/g, '').slice(0, 11); return d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2'); };
+const cpfOk = v => { const d = String(v || '').replace(/\D/g, ''); if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false; const dv = n => { let s = 0; for (let i = 0; i < n; i++) s += +d[i] * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; }; return dv(9) === +d[9] && dv(10) === +d[10]; };
+const maskCep = v => { const d = String(v || '').replace(/\D/g, '').slice(0, 8); return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d; };
 function cliForm(id) {
   const c = id ? S.clientes.find(x => x.id === id) || {} : {}; V.edit = id || null;
-  sheet(`<h3>${id ? 'Editar' : 'Nova'} cliente</h3><label>Nome</label><input id="cn" value="${esc(c.nome || '')}"><label>WhatsApp (com DDD)</label><input id="ct" type="tel" value="${esc(c.tel || '')}"><label>Aniversário</label><input id="cb" type="date" value="${esc(c.nasc || '')}"><p id="wn" class="er"></p><button class="btn pr" data-a="saveCli">Salvar</button>`);
+  const op = (l, cur) => l.map(x => `<option ${x === cur ? 'selected' : ''}>${x}</option>`).join('');
+  sheet(`<h3>${id ? 'Editar' : 'Nova'} cliente</h3><label>Nome completo</label><input id="cn" value="${esc(c.nome || '')}" autocomplete="off"><label>CPF</label><input id="cc" inputmode="numeric" placeholder="000.000.000-00" value="${esc(maskCpf(c.cpf))}"><label>WhatsApp (com DDD)</label><input id="ct" type="tel" value="${esc(c.tel || '')}"><label>Data de nascimento</label><input id="cb" type="date" value="${esc(c.nasc || '')}">
+  <label>E-mail</label><input id="ce" type="email" inputmode="email" autocapitalize="none" value="${esc(c.email || '')}"><label>Profissão</label><input id="cp" value="${esc(c.prof || '')}">
+  <div class="g2"><div><label>Estado civil</label><select id="cec"><option value=""></option>${op(['Solteira(o)', 'Casada(o)', 'União estável', 'Divorciada(o)', 'Viúva(o)'], c.ec)}</select></div><div><label>Sexo</label><select id="cs"><option value=""></option>${op(['Feminino', 'Masculino', 'Outro'], c.sexo)}</select></div></div>
+  <label>Endereço completo</label><input id="cend" value="${esc(c.end || '')}"><label>CEP</label><input id="ccep" inputmode="numeric" placeholder="00000-000" value="${esc(maskCep(c.cep))}"><label>Contato de emergência</label><input id="cem" placeholder="Nome e telefone" value="${esc(c.emerg || '')}">
+  <p id="wn" class="er"></p><button class="btn pr" data-a="saveCli">Salvar</button>`);
 }
 async function saveCli() {
   const n = $('#cn').value.trim(); if (!n) { toast('Informe o nome.'); return; }
+  const cpf = $('#cc').value.trim(); if (!cpf) { toast('Informe o CPF.'); return; } if (!cpfOk(cpf)) { toast('CPF inválido. Confira os números.'); return; }
+  const dup = S.clientes.find(x => x.id !== V.edit && String(x.cpf || '').replace(/\D/g, '') === cpf.replace(/\D/g, '')); if (dup) { toast('Este CPF já está cadastrado para ' + dup.nome + '.'); return; }
   const old = V.edit ? S.clientes.find(x => x.id === V.edit) : {};
-  try { await put('clientes', Object.assign({}, old, { nome: n, tel: $('#ct').value.trim(), nasc: $('#cb').value })); closeSheet(); } catch (e) { }
+  try { await put('clientes', Object.assign({}, old, { nome: n, cpf: cpf.replace(/\D/g, ''), tel: $('#ct').value.trim(), nasc: $('#cb').value, email: $('#ce').value.trim(), prof: $('#cp').value.trim(), ec: $('#cec').value, sexo: $('#cs').value, end: $('#cend').value.trim(), cep: $('#ccep').value.replace(/\D/g, ''), emerg: $('#cem').value.trim() })); closeSheet(); } catch (e) { }
+}
+
+/* ---------- ficha de anamnese (HOF) ---------- */
+const YN = ['Não', 'Sim'], SNA = ['Não', 'Sim', 'Não se aplica'];
+const AN_SEC = [
+  ['Histórico de saúde e hábitos', [
+    ['obj', 'Objetivo da consulta', 'txt'],
+    ['ativ', 'Pratica atividade física regularmente?', YN, 'Qual(is) e com que frequência?'],
+    ['alim', 'Como avalia seus hábitos alimentares?', ['Ótimos', 'Bons', 'Regulares', 'Ruins']],
+    ['peso', 'Perda ou ganho de peso significativo recentemente (mais de 5 kg nos últimos 3 meses)?', YN, 'Quantos quilos e qual o motivo aparente?'],
+    ['alcool', 'Faz uso frequente de bebidas alcoólicas?', YN, 'Qual a frequência e quantidade?'],
+    ['fuma', 'É fumante ou ex-fumante?', YN, 'Frequência / há quanto tempo parou?'],
+    ['drogas', 'Faz uso de drogas ilícitas?', YN],
+    ['trauma', 'Passou por algum trauma emocional importante recentemente?', YN],
+    ['gest', 'Está gestante ou amamentando?', SNA],
+    ['ciclo', 'Seu ciclo menstrual é regular?', SNA],
+    ['contra', 'Utiliza método contraceptivo?', YN],
+    ['reposicao', 'Faz ou já fez reposição hormonal?', YN],
+    ['trat', 'Está sob tratamento médico atualmente?', YN, 'Para qual condição?'],
+    ['estprev', 'Realizou tratamento estético anteriormente?', YN, 'Qual(is) e quando?'],
+    ['hofprev', 'Realizou cirurgia ou procedimento de harmonização facial anteriormente?', YN, 'Qual(is) e quando?'],
+    ['medcont', 'Utiliza alguma medicação de uso contínuo ou controlado?', YN, 'Qual(is)?'],
+    ['anab', 'Utiliza ou já utilizou anabolizantes?', YN, 'Qual(is) e quando?']]],
+  ['Pele e cuidados', [
+    ['alergia', 'Possui alergia a medicamentos, anestésicos, cosméticos ou alimentos?', YN, 'Especifique'],
+    ['rotina', 'Possui rotina de cuidados com a pele do rosto?', YN, 'Descreva brevemente'],
+    ['acidos', 'Utiliza ou já utilizou ácidos na pele?', YN, 'Qual(is) e quando?'],
+    ['roacutan', 'Utiliza ou utilizou Roacutan (Isotretinoína)?', YN, 'Quando terminou o tratamento?'],
+    ['sol', 'Como descreve sua exposição solar diária/frequente?', ['Baixa', 'Moderada', 'Alta']],
+    ['protetor', 'Utiliza protetor solar regularmente?', YN],
+    ['doencapele', 'Possui alguma doença de pele diagnosticada (ex.: acne, rosácea, dermatite)?', YN, 'Qual(is)?'],
+    ['acnefam', 'Tem histórico familiar de acne relevante?', YN],
+    ['queloide', 'Tem predisposição à formação de queloides?', YN],
+    ['manchas', 'Possui manchas na pele?', YN, 'Onde e há quanto tempo?'],
+    ['vascular', 'Observa alguma alteração vascular na pele?', YN, 'Descreva']]],
+  ['Saúde geral', [
+    ['hematomas', 'Percebe o surgimento de hematomas com facilidade?', YN],
+    ['varizes', 'Possui varizes ou microvarizes?', YN],
+    ['hemorragia', 'Tem histórico de hemorragia ou dificuldade de cicatrização?', YN],
+    ['nodulos', 'Apresenta alguma formação sólida na pele (nódulos, verrugas, cistos, cicatrizes hipertróficas/queloides)?', YN, 'Descreva'],
+    ['traumaface', 'Sofreu algum trauma ou fratura na face?', YN, 'Quando e qual foi o tratamento?'],
+    ['protese', 'Possui alguma prótese metálica ou implante no corpo/face?', YN, 'Onde?'],
+    ['cardio', 'Possui alguma doença cardiovascular (ex.: arritmia, pressão alta)?', YN, 'Qual(is)?'],
+    ['resp', 'Tem ou teve distúrbios respiratórios significativos (ex.: asma grave, bronquite crônica)?', YN, 'Qual(is)?'],
+    ['desmaios', 'Já teve desmaios, tonturas frequentes ou convulsões?', YN, 'Relate brevemente'],
+    ['cronica', 'Possui alguma doença crônica (ex.: diabetes, hipertensão, doença renal, hepática, autoimune)?', YN, 'Qual(is) e faz acompanhamento?'],
+    ['infecto', 'Foi diagnosticado com alguma doença infectocontagiosa (ex.: hepatite, HIV)?', YN, 'Qual?']]],
+  ['Expectativas', [
+    ['satisf', 'Nível de satisfação com sua aparência facial/corporal atualmente (0 = muito insatisfeito, 5 = muito satisfeito)', ['0', '1', '2', '3', '4', '5']],
+    ['expect', 'Qual sua principal expectativa em relação ao tratamento estético que busca?', 'txt'],
+    ['outras', 'Existe algo mais que considera importante informar sobre sua saúde ou hábitos antes de um procedimento estético?', 'txt']]]
+];
+const AN_Q = AN_SEC.flatMap(s => s[1]);
+function anForm(id) {
+  const c = S.clientes.find(x => x.id === id); if (!c) return; V.edit = id; const r = c.anamnese || {};
+  const q = ([k, l, t, d]) => {
+    if (t === 'txt') return `<div class="q"><label>${l}</label><textarea data-k="${k}" rows="2">${esc(r[k] || '')}</textarea></div>`;
+    const sim = r[k] === 'Sim';
+    return `<div class="q"><p>${l}</p><div class="opts">${t.map(o => `<label class="o"><input type="radio" name="an_${k}" value="${o}" ${r[k] === o ? 'checked' : ''}><span>${o}</span></label>`).join('')}</div>${d ? `<input class="det" data-d="${k}" placeholder="${d}" value="${esc(r[k + '_d'] || '')}" ${sim ? '' : 'hidden'}>` : ''}</div>`;
+  };
+  sheet(`<h3>Ficha de anamnese</h3><p class="mu" style="margin:2px 0 6px">${esc(c.nome)}${r._em ? ' · atualizada em ' + new Date(r._em).toLocaleDateString('pt-BR') + (r._por ? ' por ' + esc(r._por) : '') : ''}</p>
+  <p class="lgpd">Conforme a LGPD (Lei nº 13.709/18), os dados desta ficha são usados apenas para diagnóstico inicial e avaliação de procedimentos estéticos, armazenados com segurança pelo tempo necessário.</p>
+  ${AN_SEC.map(([t, qs]) => `<h4 class="sub" style="font-size:18px">${t}</h4>${qs.map(q).join('')}`).join('')}
+  <label class="decl"><input type="checkbox" id="andecl" ${r._decl ? 'checked' : ''}><span>A paciente declara que as informações fornecidas são verdadeiras e completas.</span></label>
+  <label>Data e local</label><input id="anloc" value="${esc(r._loc || (S.config.nome ? S.config.nome + ', ' : '') + new Date().toLocaleDateString('pt-BR'))}">
+  <p id="wn" class="er"></p><button class="btn pr" data-a="saveAn">Salvar ficha</button><button class="btn" data-a="printAn" data-v="${id}">Imprimir / salvar em PDF</button>`);
+}
+async function saveAn() {
+  const c = S.clientes.find(x => x.id === V.edit); if (!c) return; const r = {};
+  AN_Q.forEach(([k, , t, d]) => {
+    if (t === 'txt') { const el = document.querySelector(`[data-k="${k}"]`); if (el && el.value.trim()) r[k] = el.value.trim(); return; }
+    const ck = document.querySelector(`input[name="an_${k}"]:checked`); if (ck) r[k] = ck.value;
+    if (d) { const el = document.querySelector(`[data-d="${k}"]`); if (el && r[k] === 'Sim' && el.value.trim()) r[k + '_d'] = el.value.trim(); }
+  });
+  r._decl = $('#andecl').checked; r._loc = $('#anloc').value.trim(); r._em = Date.now(); r._por = ME.nome || '';
+  try { await put('clientes', Object.assign({}, c, { anamnese: r })); note('Ficha salva.'); cliSheet(c.id); } catch (e) { toast('Não foi possível salvar. Tente de novo.'); }
+}
+function printAn(id) {
+  const c = S.clientes.find(x => x.id === id); if (!c) return; const r = c.anamnese || {};
+  const row = (l, v) => `<tr><td class="l">${esc(l)}</td><td>${esc(v || '—')}</td></tr>`;
+  const dados = [['Nome', c.nome], ['CPF', maskCpf(c.cpf)], ['Profissão', c.prof], ['Nascimento', c.nasc ? fd(c.nasc) : ''], ['Estado civil', c.ec], ['Sexo', c.sexo], ['Endereço', (c.end || '') + (c.cep ? ' · CEP ' + maskCep(c.cep) : '')], ['Telefone', c.tel], ['E-mail', c.email], ['Contato de emergência', c.emerg]];
+  const body = AN_SEC.map(([t, qs]) => `<h2>${t}</h2><table>${qs.map(([k, l, ty, d]) => row(l, (r[k] || '') + (r[k + '_d'] ? ' — ' + r[k + '_d'] : ''))).join('')}</table>`).join('');
+  const w = window.open('', '_blank'); if (!w) { note('Libere pop-ups para imprimir.'); return; }
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>Anamnese - ${esc(c.nome)}</title><style>body{font:13px/1.4 -apple-system,Helvetica,sans-serif;margin:28px;color:#222}h1{font:600 22px Georgia,serif;margin:0 0 4px}h2{font:600 15px Georgia,serif;margin:18px 0 6px;border-bottom:1px solid #b9a;padding-bottom:3px}table{width:100%;border-collapse:collapse}td{padding:4px 6px;border-bottom:1px solid #eee;vertical-align:top}td.l{width:58%;color:#555}.lg{font-size:11px;color:#666;margin:6px 0}.sg{margin-top:46px;display:flex;gap:30px}.sg div{flex:1;border-top:1px solid #333;padding-top:4px;font-size:12px}</style><h1>Ficha de Anamnese</h1><p class="lg">${esc(S.config.nome || '')}</p><h2>Dados da paciente</h2><table>${dados.map(([l, v]) => row(l, v)).join('')}</table>${body}<p class="lg">Conforme a LGPD (Lei nº 13.709/18), os dados desta ficha são usados apenas para diagnóstico inicial e avaliação de procedimentos estéticos.</p><p>Declaro que as informações fornecidas nesta ficha são verdadeiras e completas.</p><p>${esc(r._loc || '')}</p><div class="sg"><div>Assinatura da paciente</div><div>Assinatura do profissional</div></div><script>setTimeout(()=>print(),300)<\/script>`);
+  w.document.close();
 }
 function cliSheet(id) {
   const c = S.clientes.find(x => x.id === id); if (!c) return;
   const h = S.agendamentos.filter(a => a.clienteId === id).sort((a, b) => (b.data + b.hora).localeCompare(a.data + a.hora)), ok = h.filter(a => a.status === 'atendido'), tot = ok.reduce((s, a) => s + vr(a), 0);
-  sheet(`<h3>${esc(c.nome)}</h3><p class="mu" style="margin:2px 0">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</p><p style="margin:6px 0 0">${ok.length} atendimento${ok.length === 1 ? '' : 's'}${(ME.admin || !DB) && tot ? ' · ' + brl(tot) + ' recebidos' : ''}</p>
-  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div>
+  sheet(`<h3>${esc(c.nome)}</h3><p class="mu" style="margin:2px 0">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</p>${c.cpf ? `<p class="mu" style="margin:2px 0">CPF ${esc(maskCpf(c.cpf))}</p>` : '<p class="mu" style="margin:2px 0">CPF não informado</p>'}<p style="margin:6px 0 0">${ok.length} atendimento${ok.length === 1 ? '' : 's'}${(ME.admin || !DB) && tot ? ' · ' + brl(tot) + ' recebidos' : ''}</p>
+  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div><button class="btn an-btn" data-a="anForm" data-v="${id}">${c.anamnese && c.anamnese._em ? '📋 Ficha de anamnese · ver / editar' : '📋 Preencher ficha de anamnese'}</button>
   <h4 class="sub" style="font-size:18px">Histórico de atendimento</h4>${h.map(a => { const st = ST[a.status] || ST.agendado; return `<div class="hi"><span>${fd(a.data)} · ${a.hora}<br><span class="mu">${esc(a.servicoNome)}${a.remarcacoes ? ' · remarcado ' + a.remarcacoes + 'x' : ''}</span></span><span class="chip" style="--c:var(--${st[1]})">${st[0]}</span></div>`; }).join('') || '<p class="mu">Sem atendimentos ainda.</p>'}`);
 }
 
@@ -339,7 +436,7 @@ const A = {
     const a = S.agendamentos.find(x => x.id === v); if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário exclui um atendimento registrado.'); return; } await delRec(a); }
     await del('agendamentos', v); closeSheet();
   },
-  cli: cliSheet, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
+  cli: cliSheet, anForm, saveAn, printAn, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
   rprev: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m - 2, 1)).slice(0, 7); render(); },
   rnext: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m, 1)).slice(0, 7); render(); },
   srv: v => srvForm(v), newSrv: () => srvForm(), prof: v => profForm(v), newProf: () => profForm(),
@@ -359,14 +456,14 @@ const A = {
   close: closeSheet,
 };
 document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a; if (a !== 'sent') e.preventDefault(); if (A[a]) A[a](b.dataset.v, b); });
-document.addEventListener('change', e => {
+document.addEventListener('change', e => { if (e.target.type === 'radio' && (e.target.name || '').startsWith('an_')) { const d = document.querySelector(`[data-d="${e.target.name.slice(3)}"]`); if (d) d.hidden = e.target.value !== 'Sim'; }
   const t = e.target;
   if (t.id === 'fc') $('#nc').hidden = t.value !== '__n';
   if (t.id === 'fs') { const o = t.selectedOptions[0]; $('#fu').value = o.dataset.d; $('#fv').value = o.dataset.v; }
   if (t.id === 'en') saveCfg(t.value.trim());
   if (t.dataset && t.dataset.claimfor) setClaim(t.dataset.claimfor, t.value);
 });
-document.addEventListener('input', e => { if (e.target.id === 'q') { V.q = e.target.value; $('#lista').innerHTML = listaCli(); } });
+document.addEventListener('input', e => { const t = e.target; if (t.id === 'cc' || t.id === 'ncpf') t.value = maskCpf(t.value); if (t.id === 'ccep') t.value = maskCep(t.value); if (t.id === 'q') { V.q = e.target.value; $('#lista').innerHTML = listaCli(); } });
 document.addEventListener('submit', e => { if (e.target.id === 'fa') { e.preventDefault(); doAuth(); } });
 
 /* ---------- desenho ---------- */
