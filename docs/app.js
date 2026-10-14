@@ -281,7 +281,7 @@ function profForm(id) {
 }
 
 /* ---------- login ---------- */
-const AE = { 'auth/invalid-credential': 'E-mail ou senha incorretos.', 'auth/wrong-password': 'E-mail ou senha incorretos.', 'auth/user-not-found': 'E-mail ou senha incorretos.', 'auth/invalid-email': 'E-mail inválido.', 'auth/email-already-in-use': 'Este e-mail já tem cadastro. Use “Entrar”.', 'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.', 'auth/missing-password': 'Informe a senha.', 'auth/network-request-failed': 'Sem conexão. Tente de novo.', 'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco.' };
+const AE = { 'auth/invalid-credential': 'E-mail ou senha incorretos.', 'auth/wrong-password': 'E-mail ou senha incorretos.', 'auth/user-not-found': 'E-mail ou senha incorretos.', 'auth/invalid-email': 'E-mail inválido.', 'auth/email-already-in-use': 'Este e-mail já tem cadastro. Use “Entrar”.', 'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.', 'auth/missing-password': 'Informe a senha.', 'auth/network-request-failed': 'Sem conexão. Tente de novo.', 'auth/popup-closed-by-user': 'Login com Google cancelado.', 'auth/cancelled-popup-request': 'Login com Google cancelado.', 'auth/unauthorized-domain': 'Domínio não autorizado no Firebase (Authentication → Configurações → Domínios autorizados).', 'auth/operation-not-allowed': 'Login com Google ainda não foi ativado no Firebase.', 'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco.' };
 function vAuth() {
   if (V.auth === 'carregando') return `<div class="auth">${LOGO}<p class="lead">Abrindo…</p></div>`;
   if (V.auth === 'pending') return `<div class="auth">${LOGO}<h1>Quase lá</h1><p class="lead">Seu acesso foi solicitado. Peça à administradora para aprová-lo e abra o app de novo.</p><p class="mu">Se ela pedir, informe este código:</p><button class="code" data-a="copyid">${esc(ME.id)}</button><button class="lk" data-a="sair">Sair</button></div>`;
@@ -289,6 +289,7 @@ function vAuth() {
   return `<div class="auth">${LOGO}<h1>${up ? 'Criar acesso' : 'Agenda'}</h1><p class="lead">${up ? 'Preencha seus dados. A administradora vai aprovar seu acesso.' : 'Entre para ver a agenda do dia.'}</p>
   <form id="fa" novalidate>${up ? '<label>Seu nome</label><input id="an" autocomplete="name" placeholder="Nome e sobrenome">' : ''}<label>E-mail</label><input id="ae" type="email" autocomplete="email" inputmode="email" autocapitalize="none" placeholder="voce@email.com"><label>Senha</label><input id="as" type="password" autocomplete="${up ? 'new-password' : 'current-password'}" placeholder="••••••••">
   <p id="wn" class="er"></p><button class="btn pr" id="ab" type="submit">${up ? 'Criar acesso' : 'Entrar'}</button></form>
+  <div class="or"><span>ou</span></div><button class="btn gg" data-a="google" type="button"><svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.400 0 20.100 0 24s.9 7.600 2.600 10.800l7.900-6.100z"/><path fill="#34A853" d="M24 48c6.500 0 11.900-2.100 15.900-5.800l-7.500-5.800c-2.100 1.400-4.800 2.300-8.400 2.300-6.300 0-11.600-4.100-13.500-9.800l-7.900 6.100C6.500 42.600 14.600 48 24 48z"/></svg>Continuar com Google</button>
   <button class="lk" data-a="authmode">${up ? 'Já tenho acesso · Entrar' : 'Primeiro acesso · Criar conta'}</button>${up ? '' : '<button class="lk mu" data-a="forgot" style="font-weight:500;margin-top:0">Esqueci minha senha</button>'}</div>`;
 }
 async function doAuth() {
@@ -351,6 +352,7 @@ const A = {
   aprovar: async v => { try { await DB.doc('usuarios/' + v).update({ ativo: true }); } catch (e) { note('Não foi possível aprovar.'); } },
   revogar: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo'; return; } V.del = null; try { await DB.doc('usuarios/' + v).update({ ativo: false }); await setClaim(v, ''); } catch (e) { note('Não foi possível remover.'); } },
   sair: () => B && B.signOut(),
+  google: async () => { try { await B.google(); } catch (x) { toast(AE[x.code] || 'Não foi possível entrar com Google.'); } },
   authmode: () => { V.auth = V.auth === 'signup' ? 'login' : 'signup'; render(); },
   forgot: async () => { const e = ($('#ae') || {}).value.trim(); if (!e) { toast('Digite seu e-mail acima e toque de novo.'); return; } try { await B.reset(e); toast('Enviamos um link de redefinição para o seu e-mail.'); } catch (x) { toast(AE[x.code] || 'Não foi possível enviar.'); } },
   copyid: async () => { try { await navigator.clipboard.writeText(ME.id); note('Código copiado'); } catch (e) { } },

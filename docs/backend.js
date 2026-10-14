@@ -50,8 +50,17 @@ export async function makeBackend(cfg) {
     onUser: cb => Au.onAuthStateChanged(auth, cb),
     signIn: (email, senha) => Au.signInWithEmailAndPassword(auth, email, senha),
     signUp: async (nome, email, senha) => { be.nomeNovo = nome; return Au.createUserWithEmailAndPassword(auth, email, senha); },
+    google: async () => {
+      const p = new Au.GoogleAuthProvider(); p.setCustomParameters({ prompt: 'select_account' });
+      try { return await Au.signInWithPopup(auth, p); }
+      catch (e) {
+        if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/web-storage-unsupported'].includes(e.code)) return Au.signInWithRedirect(auth, p);
+        throw e;
+      }
+    },
     reset: email => Au.sendPasswordResetEmail(auth, email),
     signOut: () => Au.signOut(auth),
   };
+  try { await Au.getRedirectResult(auth); } catch (e) { }
   return be;
 }
