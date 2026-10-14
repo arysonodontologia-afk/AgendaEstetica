@@ -267,7 +267,7 @@ function fotosGrade() {
   const c = cli(V.fc), l = (V.fl || []).slice().sort((x, y) => (y.data + y.em).toString().localeCompare((x.data + x.em).toString())), f = V.ff, vis = l.filter(x => f === 'todas' || x.tipo === f);
   const na = l.filter(x => x.tipo === 'antes').length, nd = l.filter(x => x.tipo === 'depois').length;
   sheet(`<h3>Fotos · ${esc(prim(c.nome))}</h3><p class="mu" style="margin:2px 0 10px">${l.length} foto${l.length === 1 ? '' : 's'} · ${na} antes · ${nd} depois</p>
-  <div class="acts"><label class="btn pr fl">📷 Tirar foto<input type="file" id="fcam" accept="image/*" capture="environment" hidden></label><label class="btn fl">🖼 Da galeria<input type="file" id="fgal" accept="image/*" multiple hidden></label></div>
+  ${c.termoImagem ? '' : `<p class="lgpd">⚠ Esta paciente ainda não assinou o termo de uso de imagem. <button class="lk" data-a="termo" data-v="${V.fc}" style="display:inline;margin:0">Abrir termo</button></p>`}<div class="acts"><label class="btn pr fl">📷 Tirar foto<input type="file" id="fcam" accept="image/*" capture="environment" hidden></label><label class="btn fl">🖼 Da galeria<input type="file" id="fgal" accept="image/*" multiple hidden></label></div>
   <div class="chips" style="margin-top:12px">${[['todas', 'Todas'], ['antes', 'Antes'], ['depois', 'Depois']].map(([k, t]) => `<button class="${f === k ? 'on' : ''}" data-a="ffil" data-v="${k}">${t}</button>`).join('')}</div>
   ${na && nd ? '<button class="btn" data-a="fcmp" style="margin-bottom:10px">⇄ Comparar antes e depois</button>' : ''}
   <div class="fg">${vis.map(x => `<button class="ft" data-a="fver" data-v="${x.id}"><img src="${x.th}" alt=""><span class="tg ${x.tipo}">${x.tipo === 'antes' ? 'Antes' : 'Depois'}</span><small>${esc(fd(x.data))}${x.proc ? '<br>' + esc(x.proc) : ''}</small></button>`).join('') || '<p class="mu" style="grid-column:1/-1">Nenhuma foto ainda. Use os botões acima.</p>'}</div>
@@ -304,6 +304,49 @@ function fotosComparar(ai, di) {
   <div class="g2"><div><label>Antes</label><select id="sA">${opt(A_, a)}</select></div><div><label>Depois</label><select id="sD">${opt(D_, d)}</select></div></div><button class="btn" data-a="fgrade" style="margin-top:14px">‹ Voltar às fotos</button>`);
   fotoBig(V.fc, a.id).then(b => { if (b && $('#cA') && V.fcmp[0] === a.id) $('#cA').src = b; }).catch(() => { });
   fotoBig(V.fc, d.id).then(b => { if (b && $('#cD') && V.fcmp[1] === d.id) $('#cD').src = b; }).catch(() => { });
+}
+
+
+/* ---------- termo de consentimento de uso de imagem ---------- */
+const TERMO_TXT = c => `Eu, ${c.nome}${c.cpf ? ', CPF ' + maskCpf(c.cpf) : ''}, declaro que fui informada(o) e concordo com o que segue:`;
+const TERMO_CLIN = 'Autorizo o registro fotográfico do meu rosto/corpo antes, durante e depois dos procedimentos, para acompanhamento clínico, avaliação de resultados e composição do meu prontuário, com sigilo e armazenamento seguro, conforme a LGPD (Lei nº 13.709/18).';
+const TERMO_DIV = ['Não autorizo o uso das minhas imagens para divulgação.', 'Autorizo o uso das imagens para divulgação (redes sociais e materiais da clínica) SEM identificar meu rosto.', 'Autorizo o uso das imagens para divulgação (redes sociais e materiais da clínica) COM identificação do meu rosto.'];
+const TERMO_REV = 'Estou ciente de que posso revogar esta autorização a qualquer momento, por comunicação à clínica, sem prejuízo do uso já realizado antes da revogação.';
+let SIG = { on: false, drawn: false };
+function sigInit() {
+  const cv = $('#sig'); if (!cv) return; const r = cv.getBoundingClientRect(), k = window.devicePixelRatio || 1; cv.width = r.width * k; cv.height = r.height * k;
+  const x = cv.getContext('2d'); x.scale(k, k); x.lineWidth = 2.2; x.lineCap = 'round'; x.lineJoin = 'round'; x.strokeStyle = '#2a2025'; SIG = { on: false, drawn: false };
+  const pt = e => { const b = cv.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
+  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); SIG.on = true; const [px, py] = pt(e); x.beginPath(); x.moveTo(px, py); x.lineTo(px + .1, py + .1); x.stroke(); SIG.drawn = true; const h = $('#sigh'); if (h) h.hidden = true; });
+  cv.addEventListener('pointermove', e => { if (!SIG.on) return; e.preventDefault(); const [px, py] = pt(e); x.lineTo(px, py); x.stroke(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => cv.addEventListener(n, () => { SIG.on = false; }));
+}
+function termoForm(id) {
+  const c = S.clientes.find(x => x.id === id); if (!c) return; V.edit = id; const t = c.termoImagem;
+  if (t && !V.refazT) {
+    sheet(`<h3>Termo de uso de imagem</h3><p class="mu" style="margin:2px 0 10px">${esc(c.nome)}</p><p class="lgpd"><b>✓ Assinado em ${new Date(t.em).toLocaleDateString('pt-BR')}</b>${t.por ? ' · registrado por ' + esc(t.por) : ''}<br>Registro clínico: autorizado<br>Divulgação: ${esc(TERMO_DIV[t.div || 0].replace(/\.$/, '').replace(/^Autorizo o uso das imagens para divulgação /, 'autorizada ').replace(/^Não autorizo.*/, 'não autorizada'))}</p>${t.ass ? `<img class="sigimg" src="${t.ass}" alt="Assinatura">` : ''}
+    <button class="btn pr" data-a="printTermo" data-v="${id}">Imprimir / salvar em PDF</button><button class="btn" data-a="refazT" data-v="${id}">Refazer termo</button><button class="btn" data-a="cli" data-v="${id}">‹ Voltar à ficha</button>`); return;
+  }
+  V.refazT = false;
+  sheet(`<h3>Termo de uso de imagem</h3><p class="mu" style="margin:2px 0 8px">${esc(c.nome)}</p><p class="lgpd">${esc(TERMO_TXT(c))}</p>
+  <label class="decl"><input type="checkbox" id="tcl"><span>${TERMO_CLIN}</span></label>
+  <label>Divulgação das imagens</label><select id="tdv">${TERMO_DIV.map((x, i) => `<option value="${i}">${esc(x)}</option>`).join('')}</select>
+  <p class="lgpd" style="margin-top:10px">${TERMO_REV}</p>
+  <label>Assinatura da paciente (com o dedo)</label><div class="sigw"><canvas id="sig"></canvas><span id="sigh" class="sigh">Assine aqui</span></div><button class="lk" data-a="sigclr" style="margin:0">Limpar assinatura</button>
+  <p id="wn" class="er"></p><button class="btn pr" data-a="saveTermo">Salvar termo</button><button class="btn" data-a="cli" data-v="${id}">Cancelar</button>`);
+  setTimeout(sigInit, 60);
+}
+async function saveTermo() {
+  const c = S.clientes.find(x => x.id === V.edit); if (!c) return;
+  if (!$('#tcl').checked) { toast('Marque a autorização do registro fotográfico.'); return; } if (!SIG.drawn) { toast('A paciente precisa assinar no quadro.'); return; }
+  const cv = $('#sig'), o = document.createElement('canvas'); o.width = 480; o.height = Math.round(480 * cv.height / cv.width); const g = o.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, o.width, o.height); g.drawImage(cv, 0, 0, o.width, o.height);
+  try { await put('clientes', Object.assign({}, c, { termoImagem: { clin: true, div: +$('#tdv').value, ass: o.toDataURL('image/png'), em: Date.now(), por: ME.nome || '' } })); note('Termo salvo.'); termoForm(c.id); } catch (e) { }
+}
+function printTermo(id) {
+  const c = S.clientes.find(x => x.id === id); if (!c || !c.termoImagem) return; const t = c.termoImagem;
+  const w = window.open('', '_blank'); if (!w) { note('Libere pop-ups para imprimir.'); return; }
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>Termo de imagem - ${esc(c.nome)}</title><style>body{font:14px/1.55 -apple-system,Helvetica,sans-serif;margin:40px;color:#222}h1{font:600 22px Georgia,serif}p{margin:12px 0}.sg{margin-top:30px;width:320px}.sg img{height:90px;display:block}.sg div{border-top:1px solid #333;padding-top:4px;font-size:12px}</style><h1>Termo de Consentimento para Uso de Imagem</h1><p>${esc(S.config.nome || '')}</p><p>${esc(TERMO_TXT(c))}</p><p>☒ ${TERMO_CLIN}</p><p>☒ ${esc(TERMO_DIV[t.div || 0])}</p><p>${TERMO_REV}</p><p>${new Date(t.em).toLocaleDateString('pt-BR')}</p><div class="sg"><img src="${t.ass}"><div>${esc(c.nome)}${c.cpf ? ' · CPF ' + maskCpf(c.cpf) : ''}</div></div><script>setTimeout(()=>print(),400)<\/script>`);
+  w.document.close();
 }
 
 /* ---------- ficha de anamnese (HOF) ---------- */
@@ -394,7 +437,7 @@ function cliSheet(id) {
   const c = S.clientes.find(x => x.id === id); if (!c) return;
   const h = S.agendamentos.filter(a => a.clienteId === id).sort((a, b) => (b.data + b.hora).localeCompare(a.data + a.hora)), ok = h.filter(a => a.status === 'atendido'), tot = ok.reduce((s, a) => s + vr(a), 0);
   sheet(`<h3>${esc(c.nome)}</h3><p class="mu" style="margin:2px 0">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</p>${c.cpf ? `<p class="mu" style="margin:2px 0">CPF ${esc(maskCpf(c.cpf))}</p>` : '<p class="mu" style="margin:2px 0">CPF não informado</p>'}<p style="margin:6px 0 0">${ok.length} atendimento${ok.length === 1 ? '' : 's'}${(ME.admin || !DB) && tot ? ' · ' + brl(tot) + ' recebidos' : ''}</p>
-  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div><button class="btn an-btn" data-a="fotos" data-v="${id}">📷 Fotos antes e depois</button><button class="btn an-btn" data-a="anForm" data-v="${id}">${c.anamnese && c.anamnese._em ? '📋 Ficha de anamnese · ver / editar' : '📋 Preencher ficha de anamnese'}</button>
+  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div><button class="btn an-btn" data-a="termo" data-v="${id}">${c.termoImagem ? '✓ Termo de uso de imagem assinado' : '📝 Termo de uso de imagem'}</button><button class="btn an-btn" data-a="fotos" data-v="${id}">📷 Fotos antes e depois</button><button class="btn an-btn" data-a="anForm" data-v="${id}">${c.anamnese && c.anamnese._em ? '📋 Ficha de anamnese · ver / editar' : '📋 Preencher ficha de anamnese'}</button>
   <h4 class="sub" style="font-size:18px">Histórico de atendimento</h4>${h.map(a => { const st = ST[a.status] || ST.agendado; return `<div class="hi"><span>${fd(a.data)} · ${a.hora}<br><span class="mu">${esc(a.servicoNome)}${a.remarcacoes ? ' · remarcado ' + a.remarcacoes + 'x' : ''}</span></span><span class="chip" style="--c:var(--${st[1]})">${st[0]}</span></div>`; }).join('') || '<p class="mu">Sem atendimentos ainda.</p>'}`);
 }
 
@@ -510,7 +553,7 @@ const A = {
     const a = S.agendamentos.find(x => x.id === v); if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário exclui um atendimento registrado.'); return; } await delRec(a); }
     await del('agendamentos', v); closeSheet();
   },
-  cli: cliSheet, fotos: fotosAbrir, fgrade: () => fotosGrade(), ffil: v => { V.ff = v; fotosGrade(); }, fver: fotoVer, fcmp: () => fotosComparar(), fsalvar: fotosSalvar,
+  cli: cliSheet, termo: termoForm, saveTermo, printTermo, refazT: v => { V.refazT = true; termoForm(v); }, sigclr: () => sigInit(), fotos: fotosAbrir, fgrade: () => fotosGrade(), ffil: v => { V.ff = v; fotosGrade(); }, fver: fotoVer, fcmp: () => fotosComparar(), fsalvar: fotosSalvar,
   ftipo: (v, b) => { $('#ftp').value = v; b.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); },
   fdel: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } V.del = null; try { await fotoRemove(V.fc, v); V.fl = V.fl.filter(x => x.id !== v); note('Foto excluída.'); fotosGrade(); } catch (e) { note('Não foi possível excluir.'); } }, anForm, saveAn, printAn, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
   rprev: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m - 2, 1)).slice(0, 7); render(); },
