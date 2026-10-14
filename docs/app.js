@@ -232,6 +232,80 @@ async function saveCli() {
   try { await put('clientes', Object.assign({}, old, { nome: n, cpf: cpf.replace(/\D/g, ''), tel: $('#ct').value.trim(), nasc: $('#cb').value, email: $('#ce').value.trim(), prof: $('#cp').value.trim(), ec: $('#cec').value, sexo: $('#cs').value, end: $('#cend').value.trim(), cep: $('#ccep').value.replace(/\D/g, ''), emerg: $('#cem').value.trim() })); closeSheet(); } catch (e) { }
 }
 
+
+/* ---------- fotos antes e depois ---------- */
+const FD = {}; // modo demonstração: fotos só em memória
+const fotosRef = cid => DB.collection('clientes/' + cid + '/fotos'), grRef = cid => DB.collection('clientes/' + cid + '/fotosgrandes');
+async function fotosGet(cid) {
+  if (!DB) return (FD[cid] || []).map(f => ({ id: f.id, ...f.meta }));
+  const s = await lim(fotosRef(cid).get(), 20000); return s.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+async function fotoBig(cid, id) { if (!DB) return ((FD[cid] || []).find(f => f.id === id) || {}).img; const s = await lim(grRef(cid).doc(id).get(), 20000); return s.exists ? s.data().img : ''; }
+async function fotoSave(cid, meta, img) {
+  const id = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  if (!DB) { (FD[cid] = FD[cid] || []).push({ id, meta, img }); return id; }
+  await lim(grRef(cid).doc(id).set({ img }), 30000); await lim(fotosRef(cid).doc(id).set(meta), 15000); return id;
+}
+async function fotoRemove(cid, id) { if (!DB) { FD[cid] = (FD[cid] || []).filter(f => f.id !== id); return; } await lim(fotosRef(cid).doc(id).delete()); try { await lim(grRef(cid).doc(id).delete()); } catch (e) { } }
+async function comprime(file, max, q) {
+  let bmp; try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch (e) { bmp = await new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = no; im.src = URL.createObjectURL(file); }); }
+  const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+  const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k); c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', q);
+}
+async function prepFoto(file) {
+  let img = await comprime(file, 1280, .72); for (let q = .6; img.length > 880000 && q > .3; q -= .1) img = await comprime(file, 1100, q);
+  return { img, th: await comprime(file, 360, .6) };
+}
+async function fotosAbrir(cid) {
+  V.fc = cid; V.ff = V.ff || 'todas'; sheet('<h3>Fotos antes e depois</h3><p class="mu">Carregando…</p>');
+  try { V.fl = await fotosGet(cid); } catch (e) { sheet('<h3>Fotos</h3><p class="er">Não foi possível carregar as fotos. Confira a conexão e se as regras do Firestore foram atualizadas.</p><button class="btn" data-a="cli" data-v="' + cid + '">‹ Voltar</button>'); return; }
+  fotosGrade();
+}
+function fotosGrade() {
+  const c = cli(V.fc), l = (V.fl || []).slice().sort((x, y) => (y.data + y.em).toString().localeCompare((x.data + x.em).toString())), f = V.ff, vis = l.filter(x => f === 'todas' || x.tipo === f);
+  const na = l.filter(x => x.tipo === 'antes').length, nd = l.filter(x => x.tipo === 'depois').length;
+  sheet(`<h3>Fotos · ${esc(prim(c.nome))}</h3><p class="mu" style="margin:2px 0 10px">${l.length} foto${l.length === 1 ? '' : 's'} · ${na} antes · ${nd} depois</p>
+  <div class="acts"><label class="btn pr fl">📷 Tirar foto<input type="file" id="fcam" accept="image/*" capture="environment" hidden></label><label class="btn fl">🖼 Da galeria<input type="file" id="fgal" accept="image/*" multiple hidden></label></div>
+  <div class="chips" style="margin-top:12px">${[['todas', 'Todas'], ['antes', 'Antes'], ['depois', 'Depois']].map(([k, t]) => `<button class="${f === k ? 'on' : ''}" data-a="ffil" data-v="${k}">${t}</button>`).join('')}</div>
+  ${na && nd ? '<button class="btn" data-a="fcmp" style="margin-bottom:10px">⇄ Comparar antes e depois</button>' : ''}
+  <div class="fg">${vis.map(x => `<button class="ft" data-a="fver" data-v="${x.id}"><img src="${x.th}" alt=""><span class="tg ${x.tipo}">${x.tipo === 'antes' ? 'Antes' : 'Depois'}</span><small>${esc(fd(x.data))}${x.proc ? '<br>' + esc(x.proc) : ''}</small></button>`).join('') || '<p class="mu" style="grid-column:1/-1">Nenhuma foto ainda. Use os botões acima.</p>'}</div>
+  <button class="btn" data-a="cli" data-v="${V.fc}" style="margin-top:14px">‹ Voltar à ficha</button>`);
+}
+async function fotosEscolhidas(files) {
+  files = [...files].filter(f => f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name)); if (!files.length) return;
+  note('Preparando ' + (files.length > 1 ? files.length + ' fotos…' : 'foto…'));
+  try { V.fp = []; for (const f of files) V.fp.push(await prepFoto(f)); } catch (e) { note('Não foi possível ler essa imagem. Tente outra foto.'); return; }
+  const tipoIni = V.ff === 'depois' ? 'depois' : 'antes';
+  sheet(`<h3>Nova${V.fp.length > 1 ? 's' : ''} foto${V.fp.length > 1 ? 's' : ''}</h3><div class="fprev">${V.fp.map(p => `<img src="${p.th}" alt="">`).join('')}</div>
+  <div class="seg" style="margin-top:12px"><button class="${tipoIni === 'antes' ? 'on' : ''}" data-a="ftipo" data-v="antes">Antes</button><button class="${tipoIni === 'depois' ? 'on' : ''}" data-a="ftipo" data-v="depois">Depois</button></div><input type="hidden" id="ftp" value="${tipoIni}">
+  <label>Procedimento</label><select id="fpr"><option value="">—</option>${S.servicos.slice().sort(byNome).map(s => `<option>${esc(s.nome)}</option>`).join('')}</select>
+  <label>Data</label><input id="fdt" type="date" value="${hoje()}"><label>Observação (opcional)</label><input id="fob" placeholder="Ex.: sessão 3, lado direito">
+  <p id="wn" class="er"></p><button class="btn pr" id="fsv" data-a="fsalvar">Salvar foto${V.fp.length > 1 ? 's' : ''}</button><button class="btn" data-a="fgrade">Cancelar</button>`);
+}
+async function fotosSalvar() {
+  const b = $('#fsv'); b.disabled = true; b.textContent = 'Salvando…';
+  const meta = { tipo: $('#ftp').value, proc: $('#fpr').value, data: $('#fdt').value || hoje(), obs: $('#fob').value.trim(), por: ME.nome || '', em: Date.now() };
+  try { for (const p of V.fp) await fotoSave(V.fc, Object.assign({ th: p.th }, meta), p.img); V.fp = []; note('Foto salva.'); await fotosAbrir(V.fc); }
+  catch (e) { b.disabled = false; b.textContent = 'Tentar de novo'; toast('Não foi possível salvar a foto. Verifique a conexão.'); }
+}
+async function fotoVer(id) {
+  const x = (V.fl || []).find(f => f.id === id); if (!x) return; V.fv = id;
+  sheet(`<h3>${x.tipo === 'antes' ? 'Antes' : 'Depois'} · ${esc(fd(x.data))}</h3><p class="mu" style="margin:2px 0 10px">${esc(x.proc || '')}${x.obs ? ' · ' + esc(x.obs) : ''}${x.por ? '<br>Registrada por ' + esc(x.por) : ''}</p><img class="fbig" id="fbg" src="${x.th}" alt=""><p class="mu" id="fld">Carregando em alta qualidade…</p>
+  <button class="btn dg" data-a="fdel" data-v="${id}">Excluir foto</button><button class="btn" data-a="fgrade">‹ Voltar às fotos</button>`);
+  try { const big = await fotoBig(V.fc, id); if (V.fv === id && big && $('#fbg')) { $('#fbg').src = big; $('#fld').remove(); } } catch (e) { const w = $('#fld'); if (w) w.textContent = 'Não foi possível carregar a versão completa.'; }
+}
+function fotosComparar(ai, di) {
+  const l = V.fl || [], A_ = l.filter(x => x.tipo === 'antes').sort((p, q) => q.data.localeCompare(p.data)), D_ = l.filter(x => x.tipo === 'depois').sort((p, q) => q.data.localeCompare(p.data));
+  const a = A_.find(x => x.id === ai) || A_[0], d = D_.find(x => x.id === di) || D_[0], opt = (L, s) => L.map(x => `<option value="${x.id}" ${s && s.id === x.id ? 'selected' : ''}>${esc(fd(x.data))}${x.proc ? ' · ' + esc(x.proc) : ''}</option>`).join('');
+  V.fcmp = [a.id, d.id];
+  sheet(`<h3>Comparar</h3><div class="cmp"><div><span class="tg antes">Antes</span><img id="cA" src="${a.th}" alt=""></div><div><span class="tg depois">Depois</span><img id="cD" src="${d.th}" alt=""></div></div>
+  <div class="g2"><div><label>Antes</label><select id="sA">${opt(A_, a)}</select></div><div><label>Depois</label><select id="sD">${opt(D_, d)}</select></div></div><button class="btn" data-a="fgrade" style="margin-top:14px">‹ Voltar às fotos</button>`);
+  fotoBig(V.fc, a.id).then(b => { if (b && $('#cA') && V.fcmp[0] === a.id) $('#cA').src = b; }).catch(() => { });
+  fotoBig(V.fc, d.id).then(b => { if (b && $('#cD') && V.fcmp[1] === d.id) $('#cD').src = b; }).catch(() => { });
+}
+
 /* ---------- ficha de anamnese (HOF) ---------- */
 const YN = ['Não', 'Sim'], SNA = ['Não', 'Sim', 'Não se aplica'];
 const AN_SEC = [
@@ -320,7 +394,7 @@ function cliSheet(id) {
   const c = S.clientes.find(x => x.id === id); if (!c) return;
   const h = S.agendamentos.filter(a => a.clienteId === id).sort((a, b) => (b.data + b.hora).localeCompare(a.data + a.hora)), ok = h.filter(a => a.status === 'atendido'), tot = ok.reduce((s, a) => s + vr(a), 0);
   sheet(`<h3>${esc(c.nome)}</h3><p class="mu" style="margin:2px 0">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</p>${c.cpf ? `<p class="mu" style="margin:2px 0">CPF ${esc(maskCpf(c.cpf))}</p>` : '<p class="mu" style="margin:2px 0">CPF não informado</p>'}<p style="margin:6px 0 0">${ok.length} atendimento${ok.length === 1 ? '' : 's'}${(ME.admin || !DB) && tot ? ' · ' + brl(tot) + ' recebidos' : ''}</p>
-  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div><button class="btn an-btn" data-a="anForm" data-v="${id}">${c.anamnese && c.anamnese._em ? '📋 Ficha de anamnese · ver / editar' : '📋 Preencher ficha de anamnese'}</button>
+  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div><button class="btn an-btn" data-a="fotos" data-v="${id}">📷 Fotos antes e depois</button><button class="btn an-btn" data-a="anForm" data-v="${id}">${c.anamnese && c.anamnese._em ? '📋 Ficha de anamnese · ver / editar' : '📋 Preencher ficha de anamnese'}</button>
   <h4 class="sub" style="font-size:18px">Histórico de atendimento</h4>${h.map(a => { const st = ST[a.status] || ST.agendado; return `<div class="hi"><span>${fd(a.data)} · ${a.hora}<br><span class="mu">${esc(a.servicoNome)}${a.remarcacoes ? ' · remarcado ' + a.remarcacoes + 'x' : ''}</span></span><span class="chip" style="--c:var(--${st[1]})">${st[0]}</span></div>`; }).join('') || '<p class="mu">Sem atendimentos ainda.</p>'}`);
 }
 
@@ -436,7 +510,9 @@ const A = {
     const a = S.agendamentos.find(x => x.id === v); if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário exclui um atendimento registrado.'); return; } await delRec(a); }
     await del('agendamentos', v); closeSheet();
   },
-  cli: cliSheet, anForm, saveAn, printAn, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
+  cli: cliSheet, fotos: fotosAbrir, fgrade: () => fotosGrade(), ffil: v => { V.ff = v; fotosGrade(); }, fver: fotoVer, fcmp: () => fotosComparar(), fsalvar: fotosSalvar,
+  ftipo: (v, b) => { $('#ftp').value = v; b.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); },
+  fdel: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } V.del = null; try { await fotoRemove(V.fc, v); V.fl = V.fl.filter(x => x.id !== v); note('Foto excluída.'); fotosGrade(); } catch (e) { note('Não foi possível excluir.'); } }, anForm, saveAn, printAn, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
   rprev: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m - 2, 1)).slice(0, 7); render(); },
   rnext: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m, 1)).slice(0, 7); render(); },
   srv: v => srvForm(v), newSrv: () => srvForm(), prof: v => profForm(v), newProf: () => profForm(),
@@ -456,9 +532,10 @@ const A = {
   close: closeSheet,
 };
 document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a; if (a !== 'sent') e.preventDefault(); if (A[a]) A[a](b.dataset.v, b); });
-document.addEventListener('change', e => { if (e.target.type === 'radio' && (e.target.name || '').startsWith('an_')) { const d = document.querySelector(`[data-d="${e.target.name.slice(3)}"]`); if (d) d.hidden = e.target.value !== 'Sim'; }
+document.addEventListener('change', e => { if (e.target.id === 'fcam' || e.target.id === 'fgal') { const fs = [...e.target.files]; fotosEscolhidas(fs).finally(() => { try { e.target.value = ''; } catch (x) { } }); return; } if (e.target.type === 'radio' && (e.target.name || '').startsWith('an_')) { const d = document.querySelector(`[data-d="${e.target.name.slice(3)}"]`); if (d) d.hidden = e.target.value !== 'Sim'; }
   const t = e.target;
-  if (t.id === 'fc') $('#nc').hidden = t.value !== '__n';
+  if (t.id === 'sA' || t.id === 'sD') { fotosComparar($('#sA').value, $('#sD').value); return; }
+  if (t.id === 'fc' && $('#nc')) $('#nc').hidden = t.value !== '__n';
   if (t.id === 'fs') { const o = t.selectedOptions[0]; $('#fu').value = o.dataset.d; $('#fv').value = o.dataset.v; }
   if (t.id === 'en') saveCfg(t.value.trim());
   if (t.dataset && t.dataset.claimfor) setClaim(t.dataset.claimfor, t.value);
