@@ -1,0 +1,426 @@
+import { makeBackend } from './backend.js';
+
+/* ---------- utilidades ---------- */
+const $ = s => document.querySelector(s), pad = n => String(n).padStart(2, '0');
+const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+const prs = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addD = (s, n) => { const d = prs(s); d.setDate(d.getDate() + n); return iso(d); };
+const hoje = () => iso(new Date()), wk = s => addD(s, -((prs(s).getDay() + 6) % 7));
+const DS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+const DSC = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const MS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const MSC = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const fd = s => { const d = prs(s); return DSC[d.getDay()] + ', ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1); };
+const brl = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const h2m = h => { const [a, b] = h.split(':').map(Number); return a * 60 + b; };
+const m2h = m => pad(Math.floor(m / 60) % 24) + ':' + pad(m % 60);
+const prim = n => String(n || '').trim().split(' ')[0], bday = s => s.slice(8) + '/' + s.slice(5, 7);
+const byNome = (a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR');
+const ST = { agendado: ['Agendado', 'wn'], confirmado: ['Confirmado', 'ok'], atendido: ['Atendido', 'in'], faltou: ['Faltou', 'er'], cancelado: ['Cancelado', 'mu'] };
+const SUG = [['Drenagem linfática', 60, 150], ['Bioestimulador de colágeno', 60, 1200], ['Limpeza de pele', 75, 180], ['Peeling', 45, 200], ['Microagulhamento', 60, 350], ['Massagem modeladora', 50, 130], ['Radiofrequência', 45, 220]];
+
+/* ---------- ícones ---------- */
+const ic = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const IC = {
+  cal: ic('<rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M8 3v4M16 3v4M3.5 10h17"/>'),
+  users: ic('<circle cx="9" cy="8.5" r="3.5"/><path d="M2.8 20c.6-3.6 3-5.5 6.2-5.5s5.6 1.9 6.2 5.5"/><path d="M16 5.2a3.3 3.3 0 0 1 0 6.1M18.5 14.8c1.6.8 2.7 2.4 3 5.2"/>'),
+  chart: ic('<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>'),
+  sliders: ic('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
+  plus: ic('<path d="M12 5v14M5 12h14"/>'),
+  prev: ic('<path d="m14.5 6-6 6 6 6"/>'),
+  next: ic('<path d="m9.5 6 6 6-6 6"/>'),
+  search: ic('<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>'),
+  lotus: `<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">${[0, 1, 2, 3, 4, 5].map(k => `<ellipse cx="32" cy="19" rx="6" ry="13" transform="rotate(${k * 60} 32 32)"/>`).join('')}<circle cx="32" cy="32" r="3.5"/></svg>`,
+};
+const LOGO = `<svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#cf7a91"/><stop offset="1" stop-color="#8e3a52"/></linearGradient></defs><rect width="100" height="100" rx="24" fill="url(#lg)"/>${[0, 1, 2, 3, 4, 5, 6, 7].map(k => `<ellipse cx="50" cy="31" rx="7.5" ry="17" fill="#fff" fill-opacity=".86" transform="rotate(${k * 45} 50 50)"/>`).join('')}<circle cx="50" cy="50" r="6.5" fill="#e3c08f"/></svg>`;
+
+/* ---------- estado ---------- */
+const S = { clientes: [], agendamentos: [], servicos: [], profissionais: [], claims: [], usuarios: [], config: { nome: '' } };
+const V = { tab: 'agenda', mode: 'dia', date: hoje(), rm: hoje().slice(0, 7), q: '', prof: '', auth: 'login' };
+const ME = { id: null, admin: true, nome: '', email: '' };
+let DB = null, B = null, REC = {}, R = {}, recKey = '', recUn = [], UNS = [];
+const LS = 'agendaEstetica';
+const lsSave = () => { try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) { } };
+const lim = (p, ms = 12000) => Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('timeout')), ms))]);
+
+let tt;
+function note(t) { const e = $('#toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => e.classList.remove('on'), 3200); }
+function toast(t) { const w = $('#wn'); if (w) w.textContent = t; else note(t); }
+
+async function put(col, o) {
+  o = JSON.parse(JSON.stringify(o));
+  const id = o.id || ('i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5)); delete o.id;
+  try {
+    if (DB) await lim(DB.collection(col).doc(id).set(o));
+    else { const a = S[col], i = a.findIndex(x => x.id === id), n = Object.assign({ id }, o); if (i < 0) a.push(n); else a[i] = n; lsSave(); render(); }
+  } catch (e) { toast('Não foi possível salvar. Verifique a conexão e tente de novo.'); throw e; }
+  return id;
+}
+async function del(col, id) {
+  try { if (DB) await lim(DB.collection(col).doc(id).delete()); else { S[col] = S[col].filter(x => x.id !== id); lsSave(); render(); } }
+  catch (e) { note('Não foi possível excluir.'); }
+}
+async function saveCfg(nome) { S.config.nome = nome; try { if (DB) await lim(DB.doc('config/geral').set({ nome })); else lsSave(); } catch (e) { note('Não foi possível salvar.'); } }
+const upd = async (id, p) => {
+  if (DB) { try { await lim(DB.collection('agendamentos').doc(id).update(p)); } catch (e) { toast('Não foi possível salvar. Tente de novo.'); throw e; } return; }
+  const a = S.agendamentos.find(x => x.id === id); if (a) await put('agendamentos', Object.assign({}, a, p));
+};
+
+const cli = id => S.clientes.find(c => c.id === id) || { nome: '(cliente removido)', tel: '' };
+const myProf = () => (S.claims.find(c => c.id === ME.id) || {}).prof || '';
+const claimUid = p => (S.claims.find(c => c.prof === p) || {}).id || '';
+const canAct = a => !DB || ME.admin || (!!myProf() && a.profissionalId === myProf());
+const vr = a => { const r = REC[a.id]; return r ? +r.valor || 0 : (+a.valorRecebido || 0); };
+
+/* trava curta por dia: impede dois agendamentos no mesmo horário quando duas pessoas salvam juntas */
+async function withLock(date, fn) {
+  if (!DB) return await fn(S.agendamentos.filter(a => a.data === date));
+  const key = 'locks/d' + date.replace(/-/g, ''), holder = (ME.id || 'x') + Math.random().toString(36).slice(2, 6);
+  try {
+    let got = false;
+    for (let i = 0; i < 8 && !got; i++) { const r = await DB.doc(key).acquire({ holder, ttlMs: 10000 }); got = r.acquired; if (!got) await new Promise(z => setTimeout(z, 500)); }
+    if (!got) return { err: 'A agenda está sendo alterada por outra pessoa. Tente de novo.' };
+    try {
+      const snap = await DB.collection('agendamentos').where('data', '==', date).get();
+      return await fn(snap.docs.map(d => Object.assign({ id: d.id }, d.data())));
+    } finally { try { await DB.doc(key).delete(); } catch (e) { } }
+  } catch (e) { return { err: 'Não foi possível salvar. Verifique a conexão.' }; }
+}
+
+/* valores recebidos ficam em área privada de cada profissional (a administradora lê todas) */
+function subRec() {
+  if (!DB || !ME.id) return;
+  const ids = ME.admin ? [...new Set(S.claims.map(c => c.id).concat(ME.id))] : [ME.id], k = ids.join(',');
+  if (k === recKey) return; recKey = k; recUn.forEach(f => f()); recUn = []; R = {};
+  ids.forEach(u => recUn.push(DB.collection('financeiro/' + u + '/recebimentos').onSnapshot(s => {
+    R[u] = s.docs.map(d => Object.assign({ id: d.id }, d.data())); REC = {};
+    Object.values(R).forEach(l => l.forEach(x => REC[x.id] = x)); render();
+  }, () => { })));
+}
+
+/* ---------- peças de interface ---------- */
+const apts = d => S.agendamentos.filter(a => a.data === d && (!V.prof || a.profissionalId === V.prof)).sort((a, b) => a.hora.localeCompare(b.hora));
+const wa = (tel, txt) => { let d = String(tel || '').replace(/\D/g, ''); if (!d) return '#'; if (d.length <= 11) d = '55' + d; return 'https://wa.me/' + d + '?text=' + encodeURIComponent(txt); };
+const msgC = (a, c) => `Olá, ${prim(c.nome)}! Aqui é do ${S.config.nome || 'nosso espaço'}. Passando para confirmar seu horário: ${a.servicoNome}${a.profissionalNome ? ' com ' + a.profissionalNome : ''}, ${fd(a.data)} às ${a.hora}. Responda *1* para CONFIRMAR ou *2* para REMARCAR. 💆‍♀️`;
+const vazio = t => `<p class="vz">${t}</p>`;
+const sheet = h => { $('#pn').innerHTML = h; $('#sh').hidden = false; };
+const closeSheet = () => { $('#sh').hidden = true; V.del = null; };
+const hello = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
+const meuNome = () => prim((S.profissionais.find(p => p.id === myProf()) || {}).nome || ME.nome);
+const mode = m => { document.body.dataset.mode = m; };
+
+function chips() {
+  if (!S.profissionais.length) return '';
+  return `<div class="chips"><button data-a="fprof" data-v="" class="${!V.prof ? 'on' : ''}">Todas</button>${S.profissionais.slice().sort(byNome).map(p => `<button data-a="fprof" data-v="${p.id}" class="${V.prof === p.id ? 'on' : ''}">${esc(prim(p.nome))}</button>`).join('')}</div>`;
+}
+function card(a) {
+  const c = cli(a.clienteId), st = ST[a.status] || ST.agendado;
+  return `<article class="apt" style="--c:var(--${st[1]})" data-a="apt" data-v="${a.id}"><div class="t"><b>${a.hora}</b><span>${m2h(h2m(a.hora) + (a.dur || 60))}</span></div><i class="bar"></i><div class="i"><h4>${esc(c.nome)}</h4><p>${esc(a.servicoNome)}${a.profissionalNome && !V.prof ? ' · ' + esc(prim(a.profissionalNome)) : ''}${a.remarcacoes ? ' · remarcado' : ''}</p></div><span class="chip">${st[0]}</span></article>`;
+}
+const empty = () => `<div class="empty">${IC.lotus}<h3>Dia livre</h3><p>Nenhum horário marcado.</p><button class="btn pr" data-a="fab">Agendar agora</button></div>`;
+const lista = d => { const l = apts(d); return l.length ? l.map(card).join('') : empty(); };
+const navRow = label => `<div class="nv"><button class="rb" data-a="prev" aria-label="Anterior">${IC.prev}</button><b>${label}</b><button class="rb" data-a="next" aria-label="Próximo">${IC.next}</button><button class="pill" data-a="hoje">Hoje</button></div>`;
+
+function vAgenda() {
+  const M = V.mode; let eyebrow, title, label, body;
+  if (M === 'dia') {
+    const d = prs(V.date), l = apts(V.date).filter(a => a.status !== 'cancelado'), cf = l.filter(a => ['confirmado', 'atendido'].includes(a.status)).length;
+    eyebrow = DS[d.getDay()] + (V.date === hoje() ? ' · hoje' : ''); title = d.getDate() + ' de ' + MS[d.getMonth()].toLowerCase(); label = fd(V.date);
+    body = (l.length ? `<div class="resumo"><span>${l.length} horário${l.length > 1 ? 's' : ''}</span><span>${cf} confirmado${cf === 1 ? '' : 's'}</span></div>` : '') + lista(V.date);
+  } else if (M === 'semana') {
+    const s = wk(V.date), e = addD(s, 6), p = prs(s), q = prs(e);
+    eyebrow = 'Semana'; title = p.getDate() + ' – ' + q.getDate() + ' ' + MSC[q.getMonth()]; label = pad(p.getDate()) + '/' + pad(p.getMonth() + 1) + ' – ' + pad(q.getDate()) + '/' + pad(q.getMonth() + 1);
+    body = [0, 1, 2, 3, 4, 5, 6].map(i => {
+      const d = addD(s, i), l = apts(d), dd = prs(d);
+      return `<div class="day"><div class="dh ${d === hoje() ? 'hj' : ''}" data-a="goDia" data-v="${d}"><span class="dn">${dd.getDate()}</span><span class="w">${DS[dd.getDay()]}</span><span class="ct">${l.length ? l.length + ' horário' + (l.length > 1 ? 's' : '') : 'livre'}</span></div>${l.map(card).join('')}</div>`;
+    }).join('');
+  } else {
+    const b = prs(V.date), y = b.getFullYear(), m = b.getMonth(), off = (new Date(y, m, 1).getDay() + 6) % 7, n = new Date(y, m + 1, 0).getDate();
+    eyebrow = y; title = MS[m]; label = MSC[m] + ' ' + y;
+    let g = '<div class="mg">' + ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'].map(x => `<div class="w">${x}</div>`).join('') + '<div class="c v"></div>'.repeat(off);
+    for (let d = 1; d <= n; d++) {
+      const s = y + '-' + pad(m + 1) + '-' + pad(d), k = apts(s).filter(a => a.status !== 'cancelado').length;
+      g += `<button class="c ${s === hoje() ? 'hj' : ''} ${s === V.date ? 'sel' : ''}" data-a="pick" data-v="${s}">${d}${k ? `<i>${'<b></b>'.repeat(Math.min(k, 3))}</i>` : ''}</button>`;
+    }
+    body = g + '</div>' + `<h3 class="sub">${DS[prs(V.date).getDay()]}, ${prs(V.date).getDate()} de ${MS[prs(V.date).getMonth()].toLowerCase()}</h3>` + lista(V.date);
+  }
+  const hi = meuNome() && M === 'dia' ? `<p class="hello">${hello()}, ${esc(meuNome())}</p>` : '';
+  return `<header class="top"><div>${hi}<p class="eyebrow">${eyebrow}</p><h1>${title}</h1></div></header>${chips()}<div class="seg">${['dia', 'semana', 'mes'].map(m => `<button data-a="mode" data-v="${m}" class="${M === m ? 'on' : ''}">${{ dia: 'Dia', semana: 'Semana', mes: 'Mês' }[m]}</button>`).join('')}</div>${navRow(label)}${body}`;
+}
+function mv(k) {
+  if (V.mode === 'dia') V.date = addD(V.date, k); else if (V.mode === 'semana') V.date = addD(V.date, 7 * k);
+  else { const d = prs(V.date); d.setDate(1); d.setMonth(d.getMonth() + k); V.date = iso(d); }
+  render();
+}
+
+function aptSheet(id) {
+  const a = S.agendamentos.find(x => x.id === id); if (!a) return; const c = cli(a.clienteId), st = ST[a.status] || ST.agendado;
+  sheet(`<h3>${esc(c.nome)}</h3><div class="det"><span class="chip" style="--c:var(--${st[1]});align-self:flex-start">${st[0]}</span><p class="mu" style="margin:6px 0 0">${esc(a.servicoNome)}${a.profissionalNome ? ' · ' + esc(a.profissionalNome) : ''}</p><p class="mu" style="margin:0">${fd(a.data)} · ${a.hora} – ${m2h(h2m(a.hora) + (a.dur || 60))} · ${brl(a.valor)}</p>${a.msgEnviada && a.status === 'agendado' ? '<p class="mu" style="margin:0">Pedido de confirmação enviado — aguardando resposta</p>' : ''}${a.obs ? `<p style="margin:8px 0 0">${esc(a.obs)}</p>` : ''}</div>
+  <a class="btn wa" href="${wa(c.tel, msgC(a, c))}" target="_blank" rel="noopener" data-a="sent" data-v="${id}">Pedir confirmação no WhatsApp</a>
+  <div class="acts" style="margin-top:10px"><button class="btn" data-a="st" data-v="${id}" data-s="confirmado">✓ Confirmou</button>${canAct(a) ? `<button class="btn" data-a="atend" data-v="${id}">✔ Atendido</button>` : ''}<button class="btn" data-a="editApt" data-v="${id}">Remarcar / editar</button><button class="btn" data-a="st" data-v="${id}" data-s="faltou">Faltou</button><button class="btn" data-a="st" data-v="${id}" data-s="cancelado">Cancelar</button><button class="btn dg" data-a="delApt" data-v="${id}">Excluir</button></div>`);
+}
+function aptForm(id, pre) {
+  const sv = S.servicos;
+  if (!sv.length) { sheet('<h3>Cadastre os procedimentos</h3><p class="mu">Antes de agendar, adicione os procedimentos em Ajustes.</p><button class="btn pr" data-a="tab" data-v="ajustes">Ir para Ajustes</button>'); return; }
+  const o = id ? S.agendamentos.find(x => x.id === id) : null, f = sv.find(x => x.id === (o && o.servicoId)) || sv[0];
+  const a = o || Object.assign({ data: V.date, hora: '09:00', dur: f.dur, valor: f.valor, clienteId: '' }, pre || {});
+  V.edit = id || null;
+  const pf = a.profissionalId || V.prof || myProf() || '';
+  const profField = S.profissionais.length ? `<label>Profissional</label><select id="fpr">${S.profissionais.slice().sort(byNome).map(p => `<option value="${p.id}" ${p.id === pf ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>` : '';
+  sheet(`<h3>${id ? 'Remarcar / editar' : 'Novo agendamento'}</h3><label>Cliente</label><select id="fc"><option value="">Selecione…</option><option value="__n">＋ Novo cliente</option>${S.clientes.slice().sort(byNome).map(c => `<option value="${c.id}" ${c.id === a.clienteId ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select>
+  <div id="nc" hidden><input id="nn" placeholder="Nome completo"><input id="nt" type="tel" placeholder="WhatsApp com DDD"><label>Aniversário</label><input id="nb" type="date"></div>
+  <label>Procedimento</label><select id="fs">${sv.map(s => `<option value="${s.id}" data-d="${s.dur}" data-v="${s.valor}" ${s.id === f.id ? 'selected' : ''}>${esc(s.nome)}</option>`).join('')}</select>
+  ${profField}<div class="rw"><div><label>Data</label><input id="fdt" type="date" value="${a.data}"></div><div><label>Hora</label><input id="fh" type="time" value="${a.hora}"></div></div>
+  <div class="rw"><div><label>Duração (min)</label><input id="fu" type="number" inputmode="numeric" value="${a.dur}"></div><div><label>Valor (R$)</label><input id="fv" type="number" inputmode="decimal" step="0.01" value="${a.valor}"></div></div>
+  <label>Observações</label><input id="fo" value="${esc(a.obs || '')}"><p id="wn" class="er"></p><button class="btn pr" id="svb" data-a="saveApt">Salvar</button>`);
+}
+async function saveApt() {
+  let cid = $('#fc').value; const sid = $('#fs').value, data = $('#fdt').value, hora = $('#fh').value;
+  if (!cid || !sid || !data || !hora) { toast('Preencha cliente, procedimento, data e hora.'); return; }
+  const pid = ($('#fpr') || {}).value || '', dur = +$('#fu').value || 60, btn = $('#svb'), nn = ($('#nn') || { value: '' }).value.trim();
+  if (cid === '__n' && !nn) { toast('Informe o nome do novo cliente.'); return; }
+  const old = V.edit ? S.agendamentos.find(x => x.id === V.edit) : null, s = S.servicos.find(x => x.id === sid) || { nome: '—' };
+  if (btn) btn.disabled = true;
+  const r = await withLock(data, async list => {
+    const act = x => !['cancelado', 'faltou'].includes(x.status);
+    const cf = list.filter(x => x.id !== V.edit && x.data === data && act(x) && h2m(x.hora) < h2m(hora) + dur && h2m(hora) < h2m(x.hora) + (x.dur || 60) && ((x.profissionalId || '') === pid || (cid !== '__n' && x.clienteId === cid)));
+    if (cf.length) return { cf };
+    if (cid === '__n') cid = await put('clientes', { nome: nn, tel: ($('#nt') || { value: '' }).value.trim(), nasc: ($('#nb') || { value: '' }).value });
+    const base = list.find(x => x.id === V.edit) || old;
+    const o = Object.assign({ status: 'agendado', remarcacoes: 0 }, base || {}, { clienteId: cid, servicoId: sid, servicoNome: s.nome, profissionalId: pid, profissionalNome: (S.profissionais.find(p => p.id === pid) || {}).nome || '', data, hora, dur, valor: +$('#fv').value || 0, obs: $('#fo').value.trim() });
+    if (base && (base.data !== data || base.hora !== hora)) { o.remarcacoes = (base.remarcacoes || 0) + 1; o.status = 'agendado'; o.msgEnviada = false; o.hist = (base.hist || []).concat(base.data + ' ' + base.hora); }
+    await put('agendamentos', o); return { ok: 1 };
+  });
+  if (btn) btn.disabled = false;
+  if (r && r.cf) { toast('Horário indisponível: já existe ' + r.cf.map(x => x.hora + ' ' + cli(x.clienteId).nome + (x.profissionalNome ? ' (' + x.profissionalNome + ')' : '')).join(', ') + '. Escolha outro horário.'); return; }
+  if (!r || r.err) { toast((r && r.err) || 'Não foi possível salvar.'); return; }
+  V.date = data; V.tab = 'agenda'; closeSheet(); render();
+}
+
+/* clientes */
+function listaCli() {
+  const q = V.q.toLowerCase();
+  return S.clientes.filter(c => !q || (c.nome || '').toLowerCase().includes(q) || (c.tel || '').includes(q)).sort(byNome).map(c => {
+    const n = S.agendamentos.filter(a => a.clienteId === c.id && a.status === 'atendido').length;
+    return `<div class="row" data-a="cli" data-v="${c.id}"><div class="av">${esc((c.nome || '?').trim()[0].toUpperCase())}</div><div class="inf"><b>${esc(c.nome)}</b><div class="mu">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</div></div><span class="mu">${n} atend.</span></div>`;
+  }).join('') || vazio('Nenhum cliente cadastrado.');
+}
+function vClientes() {
+  const m = new Date().getMonth() + 1, an = S.clientes.filter(c => c.nasc && +c.nasc.slice(5, 7) === m).sort((a, b) => a.nasc.slice(8) - b.nasc.slice(8));
+  return `<header class="top"><div><p class="eyebrow">${S.clientes.length} cadastrada${S.clientes.length === 1 ? '' : 's'}</p><h1>Clientes</h1></div></header>${an.length ? `<div class="an">🎂 <b>Aniversariantes de ${MS[m - 1]}</b><br>${an.map(c => esc(prim(c.nome)) + ' (' + c.nasc.slice(8) + ')').join(' · ')}</div>` : ''}<div class="search">${IC.search}<input id="q" placeholder="Buscar nome ou telefone" value="${esc(V.q)}"></div><div id="lista">${listaCli()}</div>`;
+}
+function cliForm(id) {
+  const c = id ? S.clientes.find(x => x.id === id) || {} : {}; V.edit = id || null;
+  sheet(`<h3>${id ? 'Editar' : 'Nova'} cliente</h3><label>Nome</label><input id="cn" value="${esc(c.nome || '')}"><label>WhatsApp (com DDD)</label><input id="ct" type="tel" value="${esc(c.tel || '')}"><label>Aniversário</label><input id="cb" type="date" value="${esc(c.nasc || '')}"><p id="wn" class="er"></p><button class="btn pr" data-a="saveCli">Salvar</button>`);
+}
+async function saveCli() {
+  const n = $('#cn').value.trim(); if (!n) { toast('Informe o nome.'); return; }
+  const old = V.edit ? S.clientes.find(x => x.id === V.edit) : {};
+  try { await put('clientes', Object.assign({}, old, { nome: n, tel: $('#ct').value.trim(), nasc: $('#cb').value })); closeSheet(); } catch (e) { }
+}
+function cliSheet(id) {
+  const c = S.clientes.find(x => x.id === id); if (!c) return;
+  const h = S.agendamentos.filter(a => a.clienteId === id).sort((a, b) => (b.data + b.hora).localeCompare(a.data + a.hora)), ok = h.filter(a => a.status === 'atendido'), tot = ok.reduce((s, a) => s + vr(a), 0);
+  sheet(`<h3>${esc(c.nome)}</h3><p class="mu" style="margin:2px 0">${esc(c.tel || 'sem telefone')}${c.nasc ? ' · 🎂 ' + bday(c.nasc) : ''}</p><p style="margin:6px 0 0">${ok.length} atendimento${ok.length === 1 ? '' : 's'}${(ME.admin || !DB) && tot ? ' · ' + brl(tot) + ' recebidos' : ''}</p>
+  <a class="btn wa" href="${wa(c.tel, 'Olá, ' + prim(c.nome) + '!')}" target="_blank" rel="noopener">Conversar no WhatsApp</a><div class="acts" style="margin-top:10px"><button class="btn" data-a="newFor" data-v="${id}">＋ Agendar</button><button class="btn" data-a="editCli" data-v="${id}">Editar cadastro</button></div>
+  <h4 class="sub" style="font-size:18px">Histórico de atendimento</h4>${h.map(a => { const st = ST[a.status] || ST.agendado; return `<div class="hi"><span>${fd(a.data)} · ${a.hora}<br><span class="mu">${esc(a.servicoNome)}${a.remarcacoes ? ' · remarcado ' + a.remarcacoes + 'x' : ''}</span></span><span class="chip" style="--c:var(--${st[1]})">${st[0]}</span></div>`; }).join('') || '<p class="mu">Sem atendimentos ainda.</p>'}`);
+}
+
+/* relatórios */
+function vRel() {
+  const adm = ME.admin || !DB, rp = adm ? V.prof : (myProf() || '__none'), [y, m] = V.rm.split('-').map(Number);
+  const L = S.agendamentos.filter(a => a.data.slice(0, 7) === V.rm && (!rp || a.profissionalId === rp)), at = L.filter(a => a.status === 'atendido'), rec = at.reduce((s, a) => s + vr(a), 0), por = {};
+  at.forEach(a => { const p = por[a.clienteId] || (por[a.clienteId] = { n: 0, v: 0 }); p.n++; p.v += vr(a); });
+  const pp = {}; at.forEach(a => { const k = a.profissionalNome || 'Sem profissional', p = pp[k] || (pp[k] = { n: 0, v: 0 }); p.n++; p.v += vr(a); });
+  const porProf = (!rp && S.profissionais.length) ? `<h3 class="grp">Por profissional</h3>${Object.entries(pp).sort((a, b) => b[1].v - a[1].v).map(([k, p]) => `<div class="hi"><span>${esc(k)}<br><span class="mu">${p.n} atendimento${p.n > 1 ? 's' : ''}</span></span><b>${brl(p.v)}</b></div>`).join('') || '<p class="mu">Sem atendimentos.</p>'}` : '';
+  const rm = L.filter(a => a.remarcacoes > 0).sort((a, b) => a.data.localeCompare(b.data)), fl = L.filter(a => a.status === 'faltou').length;
+  return `<header class="top"><div><p class="eyebrow">${adm ? 'Visão geral' : 'Só você vê estes valores'}</p><h1>${adm ? 'Relatórios' : 'Meus relatórios'}</h1></div></header>${adm ? chips() : ''}${(!adm && !myProf()) ? '<div class="tip">Vincule seu usuário a uma profissional em Ajustes para ver seus relatórios.</div>' : ''}
+  <div class="nv"><button class="rb" data-a="rprev" aria-label="Mês anterior">${IC.prev}</button><b>${MS[m - 1]} ${y}</b><button class="rb" data-a="rnext" aria-label="Próximo mês">${IC.next}</button></div>
+  <div class="kp"><div class="hero"><b>${brl(at.length ? rec / at.length : 0)}</b><span>ticket médio recebido</span></div><div><b>${Object.keys(por).length}</b><span>pacientes atendidos</span></div><div><b>${at.length}</b><span>atendimentos</span></div><div><b>${brl(rec)}</b><span>total recebido</span></div><div><b>${rm.length}</b><span>remarcados</span></div><div><b>${fl}</b><span>faltas</span></div></div>
+  ${porProf}<h3 class="grp">Pacientes atendidos</h3>${Object.entries(por).sort((a, b) => b[1].v - a[1].v).map(([id, p]) => `<div class="hi"><span>${esc(cli(id).nome)}<br><span class="mu">${p.n} atendimento${p.n > 1 ? 's' : ''}</span></span><b>${brl(p.v)}</b></div>`).join('') || '<p class="mu">Nenhum atendimento registrado no mês.</p>'}
+  <h3 class="grp">Pacientes remarcados</h3>${rm.map(a => `<div class="hi"><span>${esc(cli(a.clienteId).nome)}<br><span class="mu">${esc(a.servicoNome)} · agora ${fd(a.data)} ${a.hora}</span></span><b>${a.remarcacoes}x</b></div>`).join('') || '<p class="mu">Nenhuma remarcação no mês.</p>'}`;
+}
+
+/* ajustes */
+function contaBox() {
+  if (!DB) return '<div class="tip"><span>🧪</span><span><b>Modo demonstração.</b> Os dados ficam só neste aparelho. Para usar com a equipe, configure o Firebase (veja o LEIAME).</span></div>';
+  const mp = myProf(), pn = (S.profissionais.find(p => p.id === mp) || {}).nome;
+  let h = `<div class="row"><div class="av">${esc((ME.nome || ME.email || '?')[0].toUpperCase())}</div><div class="inf"><b>${esc(ME.nome || ME.email)}</b><div class="mu">${esc(ME.email)}${ME.admin ? ' · administradora' : ''}${pn ? ' · ' + esc(pn) : ''}</div></div><button class="mini ghost" data-a="sair">Sair</button></div>`;
+  if (!mp) {
+    const free = S.profissionais.filter(p => !S.claims.some(c => c.prof === p.id));
+    h += `<div class="an"><b>Quem é você?</b> Escolha seu nome para ver seus relatórios.${free.map(p => `<button class="btn" data-a="claim" data-v="${p.id}">Sou ${esc(p.nome)}</button>`).join('') || '<br><span class="mu">Nenhum nome livre. A administradora pode cadastrar ou liberar o seu.</span>'}</div>`;
+  }
+  return h;
+}
+function acessos() {
+  if (!DB || !ME.admin) return '';
+  const us = S.usuarios.slice().sort((a, b) => (a.ativo === b.ativo ? 0 : a.ativo ? 1 : -1) || byNome(a, b));
+  return `<h3 class="grp">Acessos</h3>${us.map(u => {
+    const cur = (S.claims.find(c => c.id === u.id) || {}).prof || '';
+    return `<div class="row"><div class="inf"><b>${esc(u.nome || u.email)}</b><div class="mu">${esc(u.email || '')}${u.ativo ? '' : ' · aguardando aprovação'}</div></div>
+    ${u.ativo ? `<select data-claimfor="${u.id}"><option value="">Sem vínculo</option>${S.profissionais.slice().sort(byNome).map(p => `<option value="${p.id}" ${p.id === cur ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>` : `<button class="mini" data-a="aprovar" data-v="${u.id}">Aprovar</button>`}
+    ${u.id !== ME.id ? `<button class="mini ghost" data-a="revogar" data-v="${u.id}">${u.ativo ? 'Remover' : 'Recusar'}</button>` : ''}</div>`;
+  }).join('') || vazio('Nenhum acesso solicitado.')}`;
+}
+function vAjustes() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone;
+  const geral = (ME.admin || !DB) ? `<h3 class="grp">Seu espaço</h3><label>Nome (aparece na mensagem de WhatsApp)</label><input id="en" value="${esc(S.config.nome || '')}" placeholder="Ex.: Studio Bella">
+  ${acessos()}<h3 class="grp">Profissionais</h3>${S.profissionais.slice().sort(byNome).map(p => `<div class="row" data-a="prof" data-v="${p.id}"><div class="av">${esc((p.nome || '?')[0].toUpperCase())}</div><div class="inf"><b>${esc(p.nome)}</b></div>${DB ? `<span class="bd">${claimUid(p.id) ? 'com login' : 'sem login'}</span>` : ''}</div>`).join('') || vazio('Cadastre quem atende.')}<button class="btn pr" data-a="newProf">＋ Nova profissional</button>
+  <h3 class="grp">Procedimentos</h3>${S.servicos.slice().sort(byNome).map(s => `<div class="row" data-a="srv" data-v="${s.id}"><div class="inf"><b>${esc(s.nome)}</b><div class="mu">${s.dur} min</div></div><b>${brl(s.valor)}</b></div>`).join('') || vazio('Nenhum procedimento cadastrado.')}
+  <button class="btn pr" data-a="newSrv">＋ Novo procedimento</button>${S.servicos.length ? '' : '<button class="btn" data-a="sug">Adicionar sugestões (drenagem, bioestimulador, limpeza de pele…)</button>'}` : '';
+  return `<header class="top"><div><p class="eyebrow">Conta e equipe</p><h1>Ajustes</h1></div></header>${ios ? '<div class="tip"><span>📲</span><span>Para instalar no iPhone: toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>.</span></div>' : ''}${contaBox()}${geral}`;
+}
+function srvForm(id) {
+  const s = id ? S.servicos.find(x => x.id === id) || {} : {}; V.edit = id || null;
+  sheet(`<h3>${id ? 'Editar' : 'Novo'} procedimento</h3><label>Nome</label><input id="sn" value="${esc(s.nome || '')}"><div class="rw"><div><label>Duração (min)</label><input id="sd" type="number" inputmode="numeric" value="${s.dur || 60}"></div><div><label>Valor (R$)</label><input id="sv" type="number" inputmode="decimal" step="0.01" value="${s.valor || 0}"></div></div><p id="wn" class="er"></p><button class="btn pr" data-a="saveSrv">Salvar</button>${id ? `<button class="btn dg" data-a="delSrv" data-v="${id}">Excluir</button>` : ''}`);
+}
+function profForm(id) {
+  const p = id ? S.profissionais.find(x => x.id === id) || {} : {}; V.edit = id || null;
+  sheet(`<h3>${id ? 'Editar' : 'Nova'} profissional</h3><label>Nome</label><input id="pnm" value="${esc(p.nome || '')}"><p id="wn" class="er"></p><button class="btn pr" data-a="saveProf">Salvar</button>${(id && claimUid(id)) ? `<button class="btn" data-a="unclaim" data-v="${claimUid(id)}">Remover vínculo de login</button>` : ''}${id ? `<button class="btn dg" data-a="delProf" data-v="${id}">Excluir</button>` : ''}`);
+}
+
+/* ---------- login ---------- */
+const AE = { 'auth/invalid-credential': 'E-mail ou senha incorretos.', 'auth/wrong-password': 'E-mail ou senha incorretos.', 'auth/user-not-found': 'E-mail ou senha incorretos.', 'auth/invalid-email': 'E-mail inválido.', 'auth/email-already-in-use': 'Este e-mail já tem cadastro. Use “Entrar”.', 'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.', 'auth/missing-password': 'Informe a senha.', 'auth/network-request-failed': 'Sem conexão. Tente de novo.', 'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco.' };
+function vAuth() {
+  if (V.auth === 'carregando') return `<div class="auth">${LOGO}<p class="lead">Abrindo…</p></div>`;
+  if (V.auth === 'pending') return `<div class="auth">${LOGO}<h1>Quase lá</h1><p class="lead">Seu acesso foi solicitado. Peça à administradora para aprová-lo e abra o app de novo.</p><p class="mu">Se ela pedir, informe este código:</p><button class="code" data-a="copyid">${esc(ME.id)}</button><button class="lk" data-a="sair">Sair</button></div>`;
+  const up = V.auth === 'signup';
+  return `<div class="auth">${LOGO}<h1>${up ? 'Criar acesso' : 'Agenda'}</h1><p class="lead">${up ? 'Preencha seus dados. A administradora vai aprovar seu acesso.' : 'Entre para ver a agenda do dia.'}</p>
+  <form id="fa" novalidate>${up ? '<label>Seu nome</label><input id="an" autocomplete="name" placeholder="Nome e sobrenome">' : ''}<label>E-mail</label><input id="ae" type="email" autocomplete="email" inputmode="email" autocapitalize="none" placeholder="voce@email.com"><label>Senha</label><input id="as" type="password" autocomplete="${up ? 'new-password' : 'current-password'}" placeholder="••••••••">
+  <p id="wn" class="er"></p><button class="btn pr" id="ab" type="submit">${up ? 'Criar acesso' : 'Entrar'}</button></form>
+  <button class="lk" data-a="authmode">${up ? 'Já tenho acesso · Entrar' : 'Primeiro acesso · Criar conta'}</button>${up ? '' : '<button class="lk mu" data-a="forgot" style="font-weight:500;margin-top:0">Esqueci minha senha</button>'}</div>`;
+}
+async function doAuth() {
+  const e = ($('#ae') || {}).value.trim(), s = ($('#as') || {}).value, n = ($('#an') || { value: '' }).value.trim(), up = V.auth === 'signup', b = $('#ab');
+  if (!e || !s) { toast('Informe e-mail e senha.'); return; } if (up && !n) { toast('Informe seu nome.'); return; }
+  b.disabled = true;
+  try { up ? await B.signUp(n, e, s) : await B.signIn(e, s); }
+  catch (x) { const w = $('#wn'); if (w) w.textContent = AE[x.code] || 'Não foi possível entrar. Tente de novo.'; const bb = $('#ab'); if (bb) bb.disabled = false; }
+}
+
+/* ---------- ações ---------- */
+async function setClaim(uid, prof) {
+  try {
+    if (!prof) { await DB.doc('claims/' + uid).delete(); return; }
+    const other = S.claims.find(c => c.prof === prof && c.id !== uid); if (other) await DB.doc('claims/' + other.id).delete();
+    await DB.doc('claims/' + uid).set({ prof });
+  } catch (e) { note('Não foi possível vincular.'); }
+}
+const delRec = async a => { if (!DB) return; try { await DB.doc('financeiro/' + (claimUid(a.profissionalId) || ME.id) + '/recebimentos/' + a.id).delete(); } catch (e) { } };
+const A = {
+  tab: v => { V.tab = v; closeSheet(); render(); window.scrollTo(0, 0); },
+  mode: v => { V.mode = v; render(); }, prev: () => mv(-1), next: () => mv(1),
+  hoje: () => { V.date = hoje(); render(); }, goDia: v => { V.date = v; V.mode = 'dia'; render(); window.scrollTo(0, 0); }, pick: v => { V.date = v; render(); },
+  fprof: v => { V.prof = v; render(); },
+  apt: aptSheet, fab: () => V.tab === 'clientes' ? cliForm() : aptForm(null), editApt: v => aptForm(v), saveApt,
+  st: async (v, b) => {
+    const a = S.agendamentos.find(x => x.id === v);
+    if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário altera um atendimento já registrado.'); return; } await delRec(a); }
+    try { await upd(v, { status: b.dataset.s }); closeSheet(); } catch (e) { }
+  },
+  atend: v => { const a = S.agendamentos.find(x => x.id === v); sheet(`<h3>Registrar atendimento</h3><label>Valor recebido (R$)</label><input id="vr" type="number" inputmode="decimal" step="0.01" value="${a ? a.valor : 0}"><p id="wn" class="er"></p><button class="btn pr" data-a="doAtend" data-v="${v}">Confirmar atendimento</button>`); },
+  doAtend: async v => {
+    const a = S.agendamentos.find(x => x.id === v); if (!a) return; const val = +$('#vr').value || 0;
+    try {
+      if (DB) {
+        const tu = claimUid(a.profissionalId) || ME.id;
+        if (!tu || !canAct(a)) { toast('Só a profissional responsável (ou a administradora) registra o valor.'); return; }
+        await lim(DB.doc('financeiro/' + tu + '/recebimentos/' + v).set({ valor: val, data: a.data, clienteId: a.clienteId, servicoNome: a.servicoNome, profissionalId: a.profissionalId || '' }));
+        await upd(v, { status: 'atendido' });
+      } else await upd(v, { status: 'atendido', valorRecebido: val });
+      closeSheet();
+    } catch (e) { toast('Não foi possível registrar. Verifique a conexão.'); }
+  },
+  sent: async v => { try { await upd(v, { msgEnviada: true }); } catch (e) { } setTimeout(closeSheet, 400); },
+  delApt: async (v, b) => {
+    if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; }
+    const a = S.agendamentos.find(x => x.id === v); if (a && a.status === 'atendido') { if (!canAct(a)) { note('Só a profissional do horário exclui um atendimento registrado.'); return; } await delRec(a); }
+    await del('agendamentos', v); closeSheet();
+  },
+  cli: cliSheet, editCli: v => cliForm(v), saveCli, newFor: v => aptForm(null, { clienteId: v }),
+  rprev: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m - 2, 1)).slice(0, 7); render(); },
+  rnext: () => { const [y, m] = V.rm.split('-').map(Number); V.rm = iso(new Date(y, m, 1)).slice(0, 7); render(); },
+  srv: v => srvForm(v), newSrv: () => srvForm(), prof: v => profForm(v), newProf: () => profForm(),
+  saveProf: async () => { const n = $('#pnm').value.trim(); if (!n) { toast('Informe o nome.'); return; } const old = V.edit ? S.profissionais.find(x => x.id === V.edit) : {}; try { await put('profissionais', Object.assign({}, old, { nome: n })); closeSheet(); } catch (e) { } },
+  delProf: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } await del('profissionais', v); if (V.prof === v) V.prof = ''; closeSheet(); },
+  saveSrv: async () => { const n = $('#sn').value.trim(); if (!n) { toast('Informe o nome.'); return; } const old = V.edit ? S.servicos.find(x => x.id === V.edit) : {}; try { await put('servicos', Object.assign({}, old, { nome: n, dur: +$('#sd').value || 60, valor: +$('#sv').value || 0 })); closeSheet(); } catch (e) { } },
+  delSrv: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo para excluir'; return; } await del('servicos', v); closeSheet(); },
+  sug: async () => { try { for (const [nome, dur, valor] of SUG) await put('servicos', { nome, dur, valor }); } catch (e) { } },
+  claim: v => setClaim(ME.id, v), unclaim: async v => { await setClaim(v, ''); closeSheet(); },
+  aprovar: async v => { try { await DB.doc('usuarios/' + v).update({ ativo: true }); } catch (e) { note('Não foi possível aprovar.'); } },
+  revogar: async (v, b) => { if (V.del !== v) { V.del = v; b.textContent = 'Toque de novo'; return; } V.del = null; try { await DB.doc('usuarios/' + v).update({ ativo: false }); await setClaim(v, ''); } catch (e) { note('Não foi possível remover.'); } },
+  sair: () => B && B.signOut(),
+  authmode: () => { V.auth = V.auth === 'signup' ? 'login' : 'signup'; render(); },
+  forgot: async () => { const e = ($('#ae') || {}).value.trim(); if (!e) { toast('Digite seu e-mail acima e toque de novo.'); return; } try { await B.reset(e); toast('Enviamos um link de redefinição para o seu e-mail.'); } catch (x) { toast(AE[x.code] || 'Não foi possível enviar.'); } },
+  copyid: async () => { try { await navigator.clipboard.writeText(ME.id); note('Código copiado'); } catch (e) { } },
+  close: closeSheet,
+};
+document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a; if (a !== 'sent') e.preventDefault(); if (A[a]) A[a](b.dataset.v, b); });
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'fc') $('#nc').hidden = t.value !== '__n';
+  if (t.id === 'fs') { const o = t.selectedOptions[0]; $('#fu').value = o.dataset.d; $('#fv').value = o.dataset.v; }
+  if (t.id === 'en') saveCfg(t.value.trim());
+  if (t.dataset && t.dataset.claimfor) setClaim(t.dataset.claimfor, t.value);
+});
+document.addEventListener('input', e => { if (e.target.id === 'q') { V.q = e.target.value; $('#lista').innerHTML = listaCli(); } });
+document.addEventListener('submit', e => { if (e.target.id === 'fa') { e.preventDefault(); doAuth(); } });
+
+/* ---------- desenho ---------- */
+function render() {
+  if (document.body.dataset.mode === 'auth') { $('#main').innerHTML = vAuth(); return; }
+  const t = V.tab;
+  $('#main').innerHTML = t === 'agenda' ? vAgenda() : t === 'clientes' ? vClientes() : t === 'rel' ? vRel() : vAjustes();
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.v === t));
+  $('#fab').style.display = (t === 'agenda' || t === 'clientes') ? 'grid' : 'none';
+}
+
+/* ---------- início ---------- */
+function startData() {
+  const sub = c => UNS.push(DB.collection(c).onSnapshot(s => { S[c] = s.docs.map(d => Object.assign({ id: d.id }, d.data())); if (c === 'claims') subRec(); render(); }, () => { }));
+  ['clientes', 'agendamentos', 'servicos', 'profissionais'].forEach(sub);
+  sub('claims');
+  if (ME.admin) sub('usuarios');
+  UNS.push(DB.doc('config/geral').onSnapshot(s => { S.config = Object.assign({ nome: '' }, s.data() || {}); if (document.activeElement.id !== 'en') render(); }, () => { }));
+  subRec();
+}
+function stopData() { UNS.forEach(f => f()); UNS = []; recUn.forEach(f => f()); recUn = []; recKey = ''; R = {}; REC = {}; Object.assign(S, { clientes: [], agendamentos: [], servicos: [], profissionais: [], claims: [], usuarios: [], config: { nome: '' } }); }
+
+async function onUser(u) {
+  stopData();
+  if (!u) { DB = null; ME.id = null; ME.admin = false; V.auth = V.auth === 'signup' ? 'signup' : 'login'; mode('auth'); render(); return; }
+  DB = B.db; ME.id = u.uid; ME.email = u.email || ''; ME.nome = u.displayName || B.nomeNovo || ''; ME.admin = false;
+  let started = false;
+  UNS.push(DB.doc('usuarios/' + u.uid).onSnapshot(async s => {
+    if (!s.exists) {
+      try { await DB.doc('usuarios/' + u.uid).set({ nome: B.nomeNovo || u.displayName || (u.email || '').split('@')[0], email: u.email || '', ativo: false, criadoEm: Date.now() }); } catch (e) { }
+      return;
+    }
+    const d = s.data(); ME.nome = d.nome || ME.nome;
+    if (d.ativo && !started) {
+      started = true;
+      try { ME.admin = (await DB.doc('admins/' + u.uid).get()).exists; } catch (e) { ME.admin = false; }
+      mode('app'); startData(); render();
+    } else if (!d.ativo) {
+      if (started) { location.reload(); return; }
+      V.auth = 'pending'; mode('auth'); render();
+    }
+  }, () => { V.auth = 'pending'; mode('auth'); render(); }));
+}
+
+async function boot() {
+  $('#nav').innerHTML = [['agenda', 'cal', 'Agenda'], ['clientes', 'users', 'Clientes'], ['rel', 'chart', 'Relatórios'], ['ajustes', 'sliders', 'Ajustes']].map(([k, i, l]) => `<button data-a="tab" data-v="${k}">${IC[i]}<span>${l}</span></button>`).join('');
+  $('#fab').innerHTML = IC.plus;
+  const cfg = window.FIREBASE_CONFIG;
+  if (cfg && cfg.apiKey) { V.auth = 'carregando'; mode('auth'); render(); }
+  try { B = await makeBackend(cfg); } catch (e) { B = { demo: true }; note('Não foi possível conectar ao Firebase. Abrindo em modo demonstração.'); }
+  if (B.demo) {
+    DB = null; ME.admin = true;
+    try { const l = JSON.parse(localStorage.getItem(LS) || 'null'); if (l) Object.assign(S, l); } catch (e) { }
+    S.claims = []; S.usuarios = []; mode('app'); render();
+  } else { V.auth = 'login'; B.onUser(onUser); }
+}
+boot();
+if (location.hash === '#debug') window.__agenda = { V, S, ME, render, mode };
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { }));

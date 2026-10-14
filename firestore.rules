@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function ativo() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true;
+    }
+    function admin() {
+      return ativo() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Cada pessoa cria o próprio pedido de acesso (sempre "ativo: false"); só a administradora aprova.
+    match /usuarios/{u} {
+      allow read: if signedIn() && (request.auth.uid == u || admin());
+      allow create: if signedIn() && request.auth.uid == u && request.resource.data.ativo == false;
+      allow update, delete: if admin();
+    }
+    // Administradoras são cadastradas manualmente no console do Firebase.
+    match /admins/{u} {
+      allow read: if signedIn() && request.auth.uid == u;
+      allow write: if false;
+    }
+
+    match /clientes/{id}      { allow read, write: if ativo(); }
+    match /agendamentos/{id}  { allow read, write: if ativo(); }
+    match /locks/{id}         { allow read, write: if ativo(); }
+
+    match /servicos/{id}      { allow read: if ativo(); allow write: if admin(); }
+    match /profissionais/{id} { allow read: if ativo(); allow write: if admin(); }
+    match /config/{id}        { allow read: if ativo(); allow write: if admin(); }
+
+    // vínculo "login → profissional"
+    match /claims/{u} {
+      allow read: if ativo();
+      allow write: if admin() || (ativo() && request.auth.uid == u);
+    }
+
+    // valores recebidos: cada profissional enxerga só os seus; a administradora enxerga todos
+    match /financeiro/{u}/recebimentos/{id} {
+      allow read, write: if ativo() && (request.auth.uid == u || admin());
+    }
+  }
+}
