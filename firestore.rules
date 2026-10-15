@@ -25,6 +25,7 @@ service cloud.firestore {
     }
 
     match /clientes/{id}      { allow read, write: if ativo(); }
+    match /clientes/{c}/{sub}/{id} { allow read, write: if ativo(); }
     match /agendamentos/{id}  { allow read, write: if ativo(); }
     match /locks/{id}         { allow read, write: if ativo(); }
 
