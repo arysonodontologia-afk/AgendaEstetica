@@ -61,7 +61,7 @@ async function del(col, id) {
   try { if (DB) await lim(DB.collection(col).doc(id).delete()); else { S[col] = S[col].filter(x => x.id !== id); lsSave(); render(); } }
   catch (e) { note('Não foi possível excluir.'); }
 }
-async function saveCfg(nome) { S.config.nome = nome; try { if (DB) await lim(DB.doc('config/geral').set({ nome })); else lsSave(); } catch (e) { note('Não foi possível salvar.'); } }
+async function saveCfg(nome, extra) { S.config.nome = nome; Object.assign(S.config, extra || {}); try { if (DB) await lim(DB.doc('config/geral').set(Object.assign({}, S.config))); else lsSave(); } catch (e) { note('Não foi possível salvar.'); } }
 const upd = async (id, p) => {
   if (DB) { try { await lim(DB.collection('agendamentos').doc(id).update(p)); } catch (e) { toast('Não foi possível salvar. Tente de novo.'); throw e; } return; }
   const a = S.agendamentos.find(x => x.id === id); if (a) await put('agendamentos', Object.assign({}, a, p));
@@ -116,7 +116,7 @@ function chips() {
 }
 function card(a) {
   const c = cli(a.clienteId), st = ST[a.status] || ST.agendado;
-  return `<article class="apt" style="--c:var(--${st[1]})" data-a="apt" data-v="${a.id}"><div class="t"><b>${a.hora}</b><span>${m2h(h2m(a.hora) + (a.dur || 60))}</span></div><i class="bar"></i><div class="i"><h4>${esc(c.nome)}</h4><p>${esc(a.servicoNome)}${a.profissionalNome && !V.prof ? ' · ' + esc(prim(a.profissionalNome)) : ''}${a.remarcacoes ? ' · remarcado' : ''}</p></div><span class="chip">${st[0]}</span>${!a.tcle && ['agendado', 'confirmado'].includes(a.status) ? '<i class="tcd" title="TCLE pendente"></i>' : ''}</article>`;
+  return `<article class="apt" style="--c:var(--${st[1]})" data-a="apt" data-v="${a.id}"><div class="t"><b>${a.hora}</b><span>${m2h(h2m(a.hora) + (a.dur || 60))}</span></div><i class="bar"></i><div class="i"><h4>${esc(c.nome)}</h4><p>${esc(a.servicoNome)}${a.profissionalNome && !V.prof ? ' · ' + esc(prim(a.profissionalNome)) : ''}${a.remarcacoes ? ' · remarcado' : ''}${a.pedidoRemarcar ? ' · ⚠ pediu remarcar' : ''}</p></div><span class="chip">${st[0]}</span>${!a.tcle && ['agendado', 'confirmado'].includes(a.status) ? '<i class="tcd" title="TCLE pendente"></i>' : ''}</article>`;
 }
 const empty = () => `<div class="empty">${IC.lotus}<h3>Dia livre</h3><p>Nenhum horário marcado.</p><button class="btn pr" data-a="fab">Agendar agora</button></div>`;
 const lista = d => { const l = apts(d); return l.length ? l.map(card).join('') : empty(); };
@@ -154,9 +154,11 @@ function mv(k) {
   render();
 }
 
+
+const waLinha = (a, c) => { if (!c.waOptIn || !a.wa) return c.waOptIn ? '' : '<p class="mu" style="margin:0">Sem autorização de WhatsApp automático (marque no cadastro).</p>'; const f = k => a.wa[k] === 'erro' ? '✗' : a.wa[k] === 'pulada' ? '–' : typeof a.wa[k] === 'number' ? '✓' : '…'; return `<p class="mu" style="margin:0">WhatsApp automático: agendamento ${f('c')} · confirmação ${f('d1')} · lembrete do dia ${f('d0')}</p>`; };
 function aptSheet(id) {
   const a = S.agendamentos.find(x => x.id === id); if (!a) return; const c = cli(a.clienteId), st = ST[a.status] || ST.agendado;
-  sheet(`<h3>${esc(c.nome)}</h3><div class="det"><span class="chip" style="--c:var(--${st[1]});align-self:flex-start">${st[0]}</span><p class="mu" style="margin:6px 0 0">${esc(a.servicoNome)}${a.profissionalNome ? ' · ' + esc(a.profissionalNome) : ''}</p><p class="mu" style="margin:0">${fd(a.data)} · ${a.hora} – ${m2h(h2m(a.hora) + (a.dur || 60))} · ${brl(a.valor)}</p>${a.msgEnviada && a.status === 'agendado' ? '<p class="mu" style="margin:0">Pedido de confirmação enviado — aguardando resposta</p>' : ''}${a.obs ? `<p style="margin:8px 0 0">${esc(a.obs)}</p>` : ''}</div>
+  sheet(`<h3>${esc(c.nome)}</h3><div class="det"><span class="chip" style="--c:var(--${st[1]});align-self:flex-start">${st[0]}</span><p class="mu" style="margin:6px 0 0">${esc(a.servicoNome)}${a.profissionalNome ? ' · ' + esc(a.profissionalNome) : ''}</p><p class="mu" style="margin:0">${fd(a.data)} · ${a.hora} – ${m2h(h2m(a.hora) + (a.dur || 60))} · ${brl(a.valor)}</p>${a.pedidoRemarcar ? '<p style="margin:8px 0 0;color:var(--er)"><b>⚠ A paciente pediu para remarcar pelo WhatsApp.</b></p>' : ''}${waLinha(a, c)}${a.msgEnviada && a.status === 'agendado' ? '<p class="mu" style="margin:0">Pedido de confirmação enviado — aguardando resposta</p>' : ''}${a.obs ? `<p style="margin:8px 0 0">${esc(a.obs)}</p>` : ''}</div>
   <a class="btn wa" href="${wa(c.tel, msgC(a, c))}" target="_blank" rel="noopener" data-a="sent" data-v="${id}">Pedir confirmação no WhatsApp</a>
   <button class="btn" data-a="tcle" data-v="${id}" style="margin-top:10px">${a.tcle ? '✓ TCLE assinado' : '📝 TCLE do procedimento · pendente'}</button><div class="acts" style="margin-top:10px"><button class="btn" data-a="st" data-v="${id}" data-s="confirmado">✓ Confirmou</button>${canAct(a) ? `<button class="btn" data-a="atend" data-v="${id}">✔ Atendido</button>` : ''}<button class="btn" data-a="editApt" data-v="${id}">Remarcar / editar</button><button class="btn" data-a="st" data-v="${id}" data-s="faltou">Faltou</button><button class="btn" data-a="st" data-v="${id}" data-s="cancelado">Cancelar</button><button class="btn dg" data-a="delApt" data-v="${id}">Excluir</button></div>`);
 }
@@ -187,7 +189,7 @@ function aptForm(id, pre) {
   const pf = a.profissionalId || V.prof || myProf() || '';
   const profField = S.profissionais.length ? `<label>Profissional</label><select id="fpr">${S.profissionais.slice().sort(byNome).map(p => `<option value="${p.id}" ${p.id === pf ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>` : '';
   sheet(`<h3>${id ? 'Remarcar / editar' : 'Novo agendamento'}</h3><label>Cliente</label><select id="fc"><option value="">Selecione…</option><option value="__n">＋ Novo cliente</option>${S.clientes.slice().sort(byNome).map(c => `<option value="${c.id}" ${c.id === a.clienteId ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select>
-  <div id="nc" hidden><input id="nn" placeholder="Nome completo"><input id="ncpf" inputmode="numeric" placeholder="CPF (000.000.000-00)"><input id="nt" type="tel" placeholder="WhatsApp com DDD"><label>Aniversário</label><input id="nb" type="date"></div>
+  <div id="nc" hidden><input id="nn" placeholder="Nome completo"><input id="ncpf" inputmode="numeric" placeholder="CPF (000.000.000-00)"><input id="nt" type="tel" placeholder="WhatsApp com DDD"><label>Aniversário</label><input id="nb" type="date"><label class="decl"><input type="checkbox" id="nwa"><span>Autoriza mensagens de agendamento e lembretes por WhatsApp.</span></label></div>
   <label>Procedimento</label><select id="fs">${sv.map(s => `<option value="${s.id}" data-d="${s.dur}" data-v="${s.valor}" ${s.id === f.id ? 'selected' : ''}>${esc(s.nome)}</option>`).join('')}</select>
   ${profField}<div class="rw"><div><label>Data</label><input id="fdt" type="date" value="${a.data}" ${o && o.data < hoje() ? '' : `min="${hoje()}"`}></div><div><label>Hora</label><select id="fh">${horaOpts(a.data, a.hora, o && o.data === a.data ? o.hora : '')}</select></div></div>
   <div class="rw"><div><label>Duração (min)</label><input id="fu" type="number" inputmode="numeric" value="${a.dur}"></div><div><label>Valor (R$)</label><input id="fv" type="number" inputmode="decimal" step="0.01" value="${a.valor}"></div></div>
@@ -207,10 +209,11 @@ async function saveApt() {
     const act = x => !['cancelado', 'faltou'].includes(x.status);
     const cf = list.filter(x => x.id !== V.edit && x.data === data && act(x) && h2m(x.hora) < h2m(hora) + dur && h2m(hora) < h2m(x.hora) + (x.dur || 60) && ((x.profissionalId || '') === pid || (cid !== '__n' && x.clienteId === cid)));
     if (cf.length) return { cf };
-    if (cid === '__n') cid = await put('clientes', { nome: nn, cpf: ncpf.replace(/\D/g, ''), tel: ($('#nt') || { value: '' }).value.trim(), nasc: ($('#nb') || { value: '' }).value });
+    if (cid === '__n') cid = await put('clientes', { nome: nn, cpf: ncpf.replace(/\D/g, ''), tel: ($('#nt') || { value: '' }).value.trim(), nasc: ($('#nb') || { value: '' }).value, waOptIn: !!($('#nwa') || {}).checked });
     const base = list.find(x => x.id === V.edit) || old;
     const o = Object.assign({ status: 'agendado', remarcacoes: 0 }, base || {}, { clienteId: cid, servicoId: sid, servicoNome: s.nome, profissionalId: pid, profissionalNome: (S.profissionais.find(p => p.id === pid) || {}).nome || '', data, hora, dur, valor: +$('#fv').value || 0, obs: $('#fo').value.trim() });
-    if (base && (base.data !== data || base.hora !== hora)) { o.remarcacoes = (base.remarcacoes || 0) + 1; o.status = 'agendado'; o.msgEnviada = false; o.hist = (base.hist || []).concat(base.data + ' ' + base.hora); }
+    if (!base) o.criadoEm = Date.now();
+    if (base && (base.data !== data || base.hora !== hora)) { o.wa = {}; o.waErro = {}; o.criadoEm = Date.now(); o.pedidoRemarcar = false; o.remarcacoes = (base.remarcacoes || 0) + 1; o.status = 'agendado'; o.msgEnviada = false; o.hist = (base.hist || []).concat(base.data + ' ' + base.hora); }
     await put('agendamentos', o); return { ok: 1 };
   });
   if (btn) btn.disabled = false;
@@ -237,7 +240,7 @@ const maskCep = v => { const d = String(v || '').replace(/\D/g, '').slice(0, 8);
 function cliForm(id) {
   const c = id ? S.clientes.find(x => x.id === id) || {} : {}; V.edit = id || null;
   const op = (l, cur) => l.map(x => `<option ${x === cur ? 'selected' : ''}>${x}</option>`).join('');
-  sheet(`<h3>${id ? 'Editar' : 'Nova'} cliente</h3><label>Nome completo</label><input id="cn" value="${esc(c.nome || '')}" autocomplete="off"><label>CPF</label><input id="cc" inputmode="numeric" placeholder="000.000.000-00" value="${esc(maskCpf(c.cpf))}"><label>WhatsApp (com DDD)</label><input id="ct" type="tel" value="${esc(c.tel || '')}"><label>Data de nascimento</label><input id="cb" type="date" value="${esc(c.nasc || '')}">
+  sheet(`<h3>${id ? 'Editar' : 'Nova'} cliente</h3><label>Nome completo</label><input id="cn" value="${esc(c.nome || '')}" autocomplete="off"><label>CPF</label><input id="cc" inputmode="numeric" placeholder="000.000.000-00" value="${esc(maskCpf(c.cpf))}"><label>WhatsApp (com DDD)</label><input id="ct" type="tel" value="${esc(c.tel || '')}"><label class="decl" style="margin-top:12px"><input type="checkbox" id="cwa" ${c.waOptIn ? 'checked' : ''}><span>A paciente autoriza receber mensagens de agendamento e lembretes por WhatsApp.</span></label><label>Data de nascimento</label><input id="cb" type="date" value="${esc(c.nasc || '')}">
   <label>E-mail</label><input id="ce" type="email" inputmode="email" autocapitalize="none" value="${esc(c.email || '')}"><label>Profissão</label><input id="cp" value="${esc(c.prof || '')}">
   <div class="g2"><div><label>Estado civil</label><select id="cec"><option value=""></option>${op(['Solteira(o)', 'Casada(o)', 'União estável', 'Divorciada(o)', 'Viúva(o)'], c.ec)}</select></div><div><label>Sexo</label><select id="cs"><option value=""></option>${op(['Feminino', 'Masculino', 'Outro'], c.sexo)}</select></div></div>
   <label>Endereço completo</label><input id="cend" value="${esc(c.end || '')}"><label>CEP</label><input id="ccep" inputmode="numeric" placeholder="00000-000" value="${esc(maskCep(c.cep))}"><label>Contato de emergência</label><input id="cem" placeholder="Nome e telefone" value="${esc(c.emerg || '')}">
@@ -248,7 +251,7 @@ async function saveCli() {
   const cpf = $('#cc').value.trim(); if (!cpf) { toast('Informe o CPF.'); return; } if (!cpfOk(cpf)) { toast('CPF inválido. Confira os números.'); return; }
   const dup = S.clientes.find(x => x.id !== V.edit && String(x.cpf || '').replace(/\D/g, '') === cpf.replace(/\D/g, '')); if (dup) { toast('Este CPF já está cadastrado para ' + dup.nome + '.'); return; }
   const old = V.edit ? S.clientes.find(x => x.id === V.edit) : {};
-  try { await put('clientes', Object.assign({}, old, { nome: n, cpf: cpf.replace(/\D/g, ''), tel: $('#ct').value.trim(), nasc: $('#cb').value, email: $('#ce').value.trim(), prof: $('#cp').value.trim(), ec: $('#cec').value, sexo: $('#cs').value, end: $('#cend').value.trim(), cep: $('#ccep').value.replace(/\D/g, ''), emerg: $('#cem').value.trim() })); closeSheet(); } catch (e) { }
+  try { await put('clientes', Object.assign({}, old, { nome: n, cpf: cpf.replace(/\D/g, ''), tel: $('#ct').value.trim(), nasc: $('#cb').value, waOptIn: $('#cwa').checked, email: $('#ce').value.trim(), prof: $('#cp').value.trim(), ec: $('#cec').value, sexo: $('#cs').value, end: $('#cend').value.trim(), cep: $('#ccep').value.replace(/\D/g, ''), emerg: $('#cem').value.trim() })); closeSheet(); } catch (e) { }
 }
 
 
@@ -534,7 +537,7 @@ function acessos() {
 }
 function vAjustes() {
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone;
-  const geral = (ME.admin || !DB) ? `<h3 class="grp">Seu espaço</h3><label>Nome (aparece na mensagem de WhatsApp)</label><input id="en" value="${esc(S.config.nome || '')}" placeholder="Ex.: Studio Bella">
+  const geral = (ME.admin || !DB) ? `<h3 class="grp">Seu espaço</h3><label>Nome (aparece na mensagem de WhatsApp)</label><input id="en" value="${esc(S.config.nome || '')}" placeholder="Ex.: Studio Bella"><label class="decl" style="margin-top:12px"><input type="checkbox" id="wao" ${S.config.waAuto ? 'checked' : ''}><span><b>Mensagens automáticas por WhatsApp</b> (aviso ao agendar, confirmação e lembrete). Ligue só depois de configurar o servidor.</span></label>
   ${acessos()}<h3 class="grp">Profissionais</h3>${S.profissionais.slice().sort(byNome).map(p => `<div class="row" data-a="prof" data-v="${p.id}"><div class="av">${esc((p.nome || '?')[0].toUpperCase())}</div><div class="inf"><b>${esc(p.nome)}</b></div>${DB ? `<span class="bd">${claimUid(p.id) ? 'com login' : 'sem login'}</span>` : ''}</div>`).join('') || vazio('Cadastre quem atende.')}<button class="btn pr" data-a="newProf">＋ Nova profissional</button>
   <h3 class="grp">Procedimentos</h3>${S.servicos.slice().sort(byNome).map(s => `<div class="row" data-a="srv" data-v="${s.id}"><div class="inf"><b>${esc(s.nome)}</b><div class="mu">${s.dur} min</div></div><b>${brl(s.valor)}</b></div>`).join('') || vazio('Nenhum procedimento cadastrado.')}
   <button class="btn pr" data-a="newSrv">＋ Novo procedimento</button>${S.servicos.length ? '' : '<button class="btn" data-a="sug">Adicionar sugestões (drenagem, bioestimulador, limpeza de pele…)</button>'}` : '';
@@ -637,6 +640,7 @@ document.addEventListener('change', e => { if (e.target.id === 'fcam' || e.targe
   if (t.id === 'fc' && $('#nc')) $('#nc').hidden = t.value !== '__n';
   if (t.id === 'fs') { const o = t.selectedOptions[0]; $('#fu').value = o.dataset.d; $('#fv').value = o.dataset.v; }
   if (t.id === 'en') saveCfg(t.value.trim());
+  if (t.id === 'wao') saveCfg(S.config.nome || '', { waAuto: t.checked });
   if (t.dataset && t.dataset.claimfor) setClaim(t.dataset.claimfor, t.value);
 });
 document.addEventListener('input', e => { const t = e.target; if (t.id === 'cc' || t.id === 'ncpf') t.value = maskCpf(t.value); if (t.id === 'ccep') t.value = maskCep(t.value); if (t.id === 'q') { V.q = e.target.value; $('#lista').innerHTML = listaCli(); } });
